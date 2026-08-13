@@ -1,0 +1,15 @@
+{
+  "name": "keizaal-inventory-bot",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy-commands": "node src/deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "pg": "^8.11.3",
+    "dotenv": "^16.4.5"
+  }
+}
