@@ -8,6 +8,7 @@ import * as stock from './commands/stock.js';
 import * as item from './commands/item.js';
 import * as settings from './commands/settings.js';
 import * as treasury from './commands/treasury.js';
+import * as report from './commands/report.js';
 import { handleInventoryMessage } from './inventory.js';
 
 const client = new Client({
@@ -19,7 +20,7 @@ const client = new Client({
 });
 
 client.commands = new Collection();
-for (const cmd of [contract, contribute, payout, stock, item, settings, treasury]) {
+for (const cmd of [contract, contribute, payout, stock, item, settings, treasury, report]) {
   client.commands.set(cmd.data.name, cmd);
 }
 

@@ -71,6 +71,23 @@ the others.
 - `/treasury` — shows the current guild gold balance
 - `/item merge from: into:` — officers, folds a duplicate item (e.g. a typo) into another
 - `/settings view` / `/settings channels` / `/settings currency` — officers, configure this server's channels and currency words
+- `/report leaderboard` / `/report treasury` / `/report stock` — charted PNG reports (see below)
+
+## Charted reports
+
+`/report` renders a chart and posts it as an image alongside a normal embed:
+
+- `/report leaderboard` — top 10 contributors by total gold earned across all payouts
+- `/report treasury` — running treasury balance over time, from the full gold ledger
+- `/report stock` — current stock levels, largest first (top 15)
+
+Rendering happens via [QuickChart](https://quickchart.io)'s hosted API — the
+bot builds a Chart.js config and POSTs it there, no local rendering
+dependency (no `node-canvas`, no headless browser) and nothing to run
+yourself. Their free tier is 1,000 renders/month with no API key, which is
+comfortably enough for on-demand report commands in a single server; if that
+ever stops being true, `src/charts.js` is the only file that would need to
+change (e.g. to a self-hosted QuickChart instance or a local renderer).
 
 ## General inventory & gold tracking
 

@@ -8,8 +8,11 @@ import * as stock from './commands/stock.js';
 import * as item from './commands/item.js';
 import * as settings from './commands/settings.js';
 import * as treasury from './commands/treasury.js';
+import * as report from './commands/report.js';
 
-const commands = [contract, contribute, payout, stock, item, settings, treasury].map((c) => c.data.toJSON());
+const commands = [contract, contribute, payout, stock, item, settings, treasury, report].map((c) =>
+  c.data.toJSON()
+);
 
 const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 
