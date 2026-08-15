@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { query, upsertMember } from '../db.js';
+import { contractAutocompleteLabel } from '../format.js';
 
 export const data = new SlashCommandBuilder()
   .setName('contribute')
@@ -88,10 +89,15 @@ export async function autocomplete(interaction) {
 
   if (focused.name === 'for') {
     const rows = await query(
-      `SELECT id, name FROM contracts WHERE status = 'open' AND name ILIKE $1
+      `SELECT id, name, created_at FROM contracts WHERE status = 'open' AND name ILIKE $1
        ORDER BY created_at DESC LIMIT 25`,
       [`%${focused.value}%`]
     );
-    await interaction.respond(rows.rows.map((r) => ({ name: r.name, value: String(r.id) })));
+    await interaction.respond(
+      rows.rows.map((r) => ({
+        name: contractAutocompleteLabel(r.name, r.created_at),
+        value: String(r.id),
+      }))
+    );
   }
 }

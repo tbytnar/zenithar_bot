@@ -1,5 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { query } from '../db.js';
+import { contractAutocompleteLabel } from '../format.js';
 
 export const data = new SlashCommandBuilder()
   .setName('payout')
@@ -59,8 +60,13 @@ export async function execute(interaction) {
 export async function autocomplete(interaction) {
   const focused = interaction.options.getFocused();
   const rows = await query(
-    `SELECT id, name FROM contracts WHERE name ILIKE $1 ORDER BY created_at DESC LIMIT 25`,
+    `SELECT id, name, created_at FROM contracts WHERE name ILIKE $1 ORDER BY created_at DESC LIMIT 25`,
     [`%${focused}%`]
   );
-  await interaction.respond(rows.rows.map((r) => ({ name: r.name, value: String(r.id) })));
+  await interaction.respond(
+    rows.rows.map((r) => ({
+      name: contractAutocompleteLabel(r.name, r.created_at),
+      value: String(r.id),
+    }))
+  );
 }
