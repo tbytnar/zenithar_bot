@@ -89,8 +89,12 @@ CREATE TABLE inventory_lots (
     guild_id            BIGINT NOT NULL REFERENCES guild_settings(guild_id),
     item_id             INT NOT NULL REFERENCES items(id),
     member_id           BIGINT,
-    quantity            NUMERIC NOT NULL,
-    original_quantity   NUMERIC NOT NULL,
+    -- Fixed 6-decimal scale so proportional-consumption math (see
+    -- planConsumption in src/math.js) can't leave unbounded floating-point
+    -- dust behind after repeated partial draws — Postgres rounds to the
+    -- column's scale on write, on top of the JS-side rounding already done.
+    quantity            NUMERIC(14,6) NOT NULL,
+    original_quantity   NUMERIC(14,6) NOT NULL,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     FOREIGN KEY (member_id, guild_id) REFERENCES members(id, guild_id)
 );

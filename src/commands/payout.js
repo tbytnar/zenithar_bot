@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { query } from '../db.js';
-import { contractChoices } from '../autocomplete.js';
+import { contractChoices, isValidId } from '../autocomplete.js';
 
 export const data = new SlashCommandBuilder()
   .setName('payout')
@@ -12,6 +12,14 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
   const guildId = interaction.guildId;
   const contractId = interaction.options.getString('for');
+
+  if (!isValidId(contractId)) {
+    await interaction.reply({
+      content: 'Pick the contract from the autocomplete suggestions rather than typing your own text.',
+      ephemeral: true,
+    });
+    return;
+  }
 
   const contract = await query(
     `SELECT name, status, payout_gold, destination FROM contracts WHERE id = $1 AND guild_id = $2`,

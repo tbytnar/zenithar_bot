@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { query, upsertMember } from '../db.js';
-import { itemChoices, contractChoices } from '../autocomplete.js';
+import { itemChoices, contractChoices, isValidId } from '../autocomplete.js';
 
 export const data = new SlashCommandBuilder()
   .setName('contribute')
@@ -45,6 +45,14 @@ export async function execute(interaction) {
 
     if (amount <= 0) {
       await interaction.reply({ content: 'Amount must be greater than zero.', ephemeral: true });
+      return;
+    }
+
+    if (!isValidId(itemId) || !isValidId(contractId)) {
+      await interaction.reply({
+        content: 'Pick both the item and the contract from the autocomplete suggestions rather than typing your own text.',
+        ephemeral: true,
+      });
       return;
     }
 

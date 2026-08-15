@@ -1,6 +1,8 @@
 import { query } from './db.js';
 import { contractAutocompleteLabel } from './format.js';
 
+export { isValidId } from './ids.js';
+
 export async function itemChoices(guildId, search) {
   const rows = await query(
     `SELECT id, name FROM items WHERE guild_id = $1 AND name ILIKE $2 ORDER BY name LIMIT 25`,

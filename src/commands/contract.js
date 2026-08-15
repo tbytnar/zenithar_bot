@@ -1,8 +1,9 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { query, upsertMember, withTransaction } from '../db.js';
-import { itemChoices, contractChoices } from '../autocomplete.js';
+import { itemChoices, contractChoices, isValidId } from '../autocomplete.js';
 import { resolveOrCreateItem, consumeInventory, createLot } from '../inventory.js';
 import { recordLedgerEntry } from '../treasury.js';
+import { splitProportionally } from '../math.js';
 
 const ITEM_LINE = /^\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
 
@@ -119,6 +120,14 @@ export async function execute(interaction) {
     const targetItemId = interaction.options.getString('target_item');
     const targetQty = interaction.options.getNumber('target_quantity');
 
+    if (targetItemId && !isValidId(targetItemId)) {
+      await interaction.reply({
+        content: 'Pick the target item from the autocomplete suggestions rather than typing your own text.',
+        ephemeral: true,
+      });
+      return;
+    }
+
     const result = await query(
       `INSERT INTO contracts (guild_id, name, destination, target_item_id, target_quantity)
        VALUES ($1, $2, $3, $4, $5) RETURNING id`,
@@ -134,6 +143,14 @@ export async function execute(interaction) {
   if (sub === 'close') {
     const contractId = interaction.options.getString('for');
     const payoutGold = interaction.options.getNumber('payout_gold');
+
+    if (!isValidId(contractId)) {
+      await interaction.reply({
+        content: 'Pick the contract from the autocomplete suggestions rather than typing your own text.',
+        ephemeral: true,
+      });
+      return;
+    }
 
     const contractRow = await query(`SELECT status FROM contracts WHERE id = $1 AND guild_id = $2`, [
       contractId,
@@ -289,27 +306,25 @@ async function computeAndRecordPayout(runQuery, guildId, contractId, payoutGold,
     await recordLedgerEntry({ guildId, contractId, deltaGold: payoutGold, reason: 'sale' }, runQuery);
   }
 
+  const splits = splitProportionally(
+    totals.rows.map((r) => ({ key: r.credit_id, weight: r.weighted_input })),
+    payoutGold
+  );
+
   const lines = [];
-  if (totals.rows.length > 0) {
-    const grandTotal = totals.rows.reduce((sum, r) => sum + Number(r.weighted_input), 0);
+  for (const { key: memberId, weight: inputValue, sharePct, amount: goldAwarded } of splits) {
+    await runQuery(
+      `INSERT INTO payouts (guild_id, contract_id, member_id, input_value, share_pct, gold_awarded)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [guildId, contractId, memberId, inputValue, sharePct, goldAwarded]
+    );
 
-    for (const row of totals.rows) {
-      const sharePct = Number(row.weighted_input) / grandTotal;
-      const goldAwarded = sharePct * payoutGold;
+    await recordLedgerEntry(
+      { guildId, contractId, memberId, deltaGold: -goldAwarded, reason: 'payout' },
+      runQuery
+    );
 
-      await runQuery(
-        `INSERT INTO payouts (guild_id, contract_id, member_id, input_value, share_pct, gold_awarded)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [guildId, contractId, row.credit_id, row.weighted_input, sharePct, goldAwarded]
-      );
-
-      await recordLedgerEntry(
-        { guildId, contractId, memberId: row.credit_id, deltaGold: -goldAwarded, reason: 'payout' },
-        runQuery
-      );
-
-      lines.push(`<@${row.credit_id}>: ${(sharePct * 100).toFixed(1)}% — ${goldAwarded.toFixed(0)}g`);
-    }
+    lines.push(`<@${memberId}>: ${(sharePct * 100).toFixed(1)}% — ${goldAwarded.toFixed(0)}g`);
   }
 
   await runQuery(

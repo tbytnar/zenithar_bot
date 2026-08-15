@@ -2,6 +2,7 @@ import { EmbedBuilder } from 'discord.js';
 import { query, upsertMember } from './db.js';
 import { getGuildSettings, resolveGoldChannelId, currencyWords } from './guildSettings.js';
 import { recordLedgerEntry } from './treasury.js';
+import { planConsumption } from './math.js';
 
 const ITEM_LINE = /^\s*([+-])\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
 const COLOR_ADDED = 0x57f287; // Discord's "success" green
@@ -77,20 +78,17 @@ export async function consumeInventory(guildId, itemId, requestedQty, runQuery =
     [guildId, itemId]
   );
 
-  const totalAvailable = lots.rows.reduce((sum, l) => sum + Number(l.quantity), 0);
-  const consumed = [];
+  const { takes, deficit } = planConsumption(
+    lots.rows.map((l) => ({ id: l.id, memberId: l.member_id, quantity: l.quantity })),
+    requestedQty
+  );
 
-  if (totalAvailable > 0) {
-    const shareRatio = Math.min(requestedQty, totalAvailable) / totalAvailable;
-    for (const lot of lots.rows) {
-      const take = Number(lot.quantity) * shareRatio;
-      if (take <= 0) continue;
-      await runQuery(`UPDATE inventory_lots SET quantity = quantity - $2 WHERE id = $1`, [lot.id, take]);
-      if (lot.member_id) consumed.push({ memberId: lot.member_id, quantity: take });
-    }
+  const consumed = [];
+  for (const take of takes) {
+    await runQuery(`UPDATE inventory_lots SET quantity = quantity - $2 WHERE id = $1`, [take.id, take.quantity]);
+    if (take.memberId) consumed.push({ memberId: take.memberId, quantity: take.quantity });
   }
 
-  const deficit = requestedQty - totalAvailable;
   if (deficit > 0) {
     await runQuery(
       `INSERT INTO inventory_lots (guild_id, item_id, member_id, quantity, original_quantity)

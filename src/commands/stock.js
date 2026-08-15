@@ -13,7 +13,7 @@ export async function execute(interaction) {
      JOIN items i ON i.id = l.item_id
      WHERE l.guild_id = $1
      GROUP BY i.name
-     HAVING SUM(l.quantity) != 0
+     HAVING ROUND(SUM(l.quantity), 6) != 0
      ORDER BY i.name`,
     [guildId]
   );

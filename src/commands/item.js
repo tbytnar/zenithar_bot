@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { query, withTransaction } from '../db.js';
-import { itemChoices } from '../autocomplete.js';
+import { itemChoices, isValidId } from '../autocomplete.js';
 
 export const data = new SlashCommandBuilder()
   .setName('item')
@@ -29,6 +29,14 @@ export async function execute(interaction) {
 
   const fromId = interaction.options.getString('from');
   const intoId = interaction.options.getString('into');
+
+  if (!isValidId(fromId) || !isValidId(intoId)) {
+    await interaction.reply({
+      content: 'Pick both items from the autocomplete suggestions rather than typing your own text.',
+      ephemeral: true,
+    });
+    return;
+  }
 
   if (fromId === intoId) {
     await interaction.reply({ content: 'Pick two different items.', ephemeral: true });
