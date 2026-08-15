@@ -40,56 +40,73 @@ tmux attach -t deploy
 and whatever was running — including a slow `docker compose build` — is
 still going, exactly where it left off.
 
-## 1. Install Docker, Compose, git, tmux
+Multi-line pastes (heredocs, several stacked commands) are also the most
+likely thing to get corrupted by a phone SSH client's paste handling —
+lines can arrive out of order or get split mid-word. Everything from
+here on is deliberately **one short line per step** for that reason. If
+you ever need to run something longer, prefer cloning it as a file from
+the repo (as in step 1 below) over pasting it inline.
 
-Amazon Linux 2023 ships Docker in its own repo but not the Compose
-plugin, so that's installed separately from GitHub releases (works on
-both x86_64 and ARM/Graviton instances):
-
-```bash
-sudo dnf install -y docker git tmux
-sudo systemctl enable --now docker
-sudo mkdir -p /usr/local/lib/docker/cli-plugins
-ARCH=$(uname -m)
-[ "$ARCH" = "aarch64" ] && COMPOSE_ARCH="aarch64" || COMPOSE_ARCH="x86_64"
-sudo curl -SL "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${COMPOSE_ARCH}" -o /usr/local/lib/docker/cli-plugins/docker-compose
-sudo chmod +x /usr/local/lib/docker/cli-plugins/docker-compose
-sudo docker compose version
-```
-
-## 2. Get the code onto the instance
+## 1. Get the code onto the instance
 
 You'll need a GitHub Personal Access Token (fine-grained, read-only,
 scoped to `tbytnar/zenithar_bot`) since the repo is private —
 generate one at https://github.com/settings/personal-access-tokens/new,
 then substitute it directly into the command below (don't paste tokens
-into chat with anyone, including an AI assistant):
+into chat with anyone, including an AI assistant). This is one line
+even though it wraps visually:
 
 ```bash
-git clone https://<YOUR_GITHUB_USERNAME>:<YOUR_PAT>@github.com/tbytnar/zenithar_bot.git
-cd zenithar_bot
-git checkout main
+git clone https://<YOUR_GITHUB_USERNAME>:<YOUR_PAT>@github.com/tbytnar/zenithar_bot.git && cd zenithar_bot
 ```
 
-## 3. Configure secrets (one paste, no editor)
+## 2. Install Docker, Compose, git, tmux
 
-Fill in the placeholders below in a notes app first, then paste the
-whole block at once:
+Amazon Linux 2023 ships Docker in its own repo but not the Compose
+plugin, so `deploy/install-docker.sh` (already in the repo you just
+cloned) installs Compose separately from GitHub releases — works on
+both x86_64 and ARM/Graviton instances, and idempotent if you need to
+re-run it:
 
 ```bash
-cat > .env <<'EOF'
-DISCORD_TOKEN=your-bot-token
-DISCORD_CLIENT_ID=your-application-id
-DISCORD_GUILD_ID=your-server-id
-DATABASE_URL=postgres://user:password@localhost:5432/keizaal_inventory
-POSTGRES_PASSWORD=pick-a-strong-random-password
-EOF
+bash deploy/install-docker.sh
 ```
 
-`DATABASE_URL` here is unused by Compose (only relevant if you ever run
-the bot outside Docker) — leave it as-is. Get `DISCORD_TOKEN` /
-`DISCORD_CLIENT_ID` / `DISCORD_GUILD_ID` from your Discord application,
-see README.md for where.
+The script ends by printing `docker compose version` — confirm it shows
+a version number before moving on.
+
+## 3. Configure secrets (short one-liners, no editor, no heredoc)
+
+Start from the template:
+
+```bash
+cp .env.example .env
+```
+
+Then run each of these four, substituting your real value into each one
+before you paste it (fill them in from a notes app if that's easier —
+just don't send secrets to anyone else, AI included, while doing it):
+
+```bash
+sed -i "s|^DISCORD_TOKEN=.*|DISCORD_TOKEN=REPLACE_ME|" .env
+```
+
+```bash
+sed -i "s|^DISCORD_CLIENT_ID=.*|DISCORD_CLIENT_ID=REPLACE_ME|" .env
+```
+
+```bash
+sed -i "s|^DISCORD_GUILD_ID=.*|DISCORD_GUILD_ID=REPLACE_ME|" .env
+```
+
+```bash
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=REPLACE_ME|" .env
+```
+
+Get `DISCORD_TOKEN` / `DISCORD_CLIENT_ID` / `DISCORD_GUILD_ID` from your
+Discord application (see README.md for where). For
+`POSTGRES_PASSWORD`, any strong random string works. The `DATABASE_URL`
+line in `.env` is unused by Compose — leave it as the template default.
 
 ## 4. Bring it up
 
@@ -108,6 +125,9 @@ healthy:
 
 ```bash
 sudo docker compose ps
+```
+
+```bash
 sudo docker compose logs -f bot
 ```
 
@@ -128,14 +148,12 @@ and replies work.
 ## Updating after a code change
 
 ```bash
-cd ~/zenithar_bot
-git pull
-sudo docker compose up -d --build
+cd ~/zenithar_bot && git pull && sudo docker compose up -d --build
 ```
 
 `restart: unless-stopped` on both services means the bot and DB also
 survive instance reboots and crashes automatically — no extra systemd
-unit needed, since Docker itself is enabled as a system service (step 1).
+unit needed, since Docker itself is enabled as a system service (step 2).
 
 ## Backups (not automated yet)
 
