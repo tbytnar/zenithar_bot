@@ -40,12 +40,18 @@ replacing the `+item` message-scrollback system.
 - `/contract close for: payout_gold:` — locks the contract, computes and posts the split
 - `/payout for:` — running totals if open, final breakdown if closed
 
+## Permissions
+
+`/contract create` and `/contract close` default to requiring **Manage
+Server** (`ManageGuild`). Server admins can loosen or tighten this per
+role via Server Settings → Integrations → Zenithar Bot, without touching
+code. Changing the default in code means editing
+`setDefaultMemberPermissions(...)` in `src/commands/contract.js` and
+re-running `npm run deploy-commands` (or the equivalent
+`docker compose run --rm bot node src/deploy-commands.js` in production).
+
 ## Still to decide
 
-- **Permissions**: `/contract create` and `/contract close` currently have
-  no restriction beyond Discord's default. If you want these officer-only,
-  add a role check at the top of `execute()` in `contract.js`, or restrict
-  the command itself via Discord's integration permissions in Server Settings.
 - **Unit values**: single-material contracts (Dawnstar charcoal) work fine
   with the default `unit_value = 1`. For mixed contracts (the farm run:
   cabbage/wheat/gourd/potato) you'll want real relative values in the

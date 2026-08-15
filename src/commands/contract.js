@@ -1,9 +1,10 @@
-import { SlashCommandBuilder } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { query, upsertMember } from '../db.js';
 
 export const data = new SlashCommandBuilder()
   .setName('contract')
   .setDescription('Manage contracts')
+  .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
   .addSubcommand((sub) =>
     sub
       .setName('create')
