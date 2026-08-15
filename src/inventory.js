@@ -1,6 +1,10 @@
+import { EmbedBuilder } from 'discord.js';
 import { query } from './db.js';
 
 const LINE_PATTERN = /^\s*([+-])\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
+const COLOR_ADDED = 0x57f287; // Discord's "success" green
+const COLOR_REMOVED = 0xed4245; // Discord's "danger" red
+const EMBEDS_PER_MESSAGE = 10; // Discord's hard limit per message
 
 // Matches existing items on exact name first, then a trigram-similarity
 // fuzzy match (catches typos like "Cabage" -> "Cabbage"), and only creates
@@ -50,15 +54,21 @@ export async function handleInventoryMessage(message) {
 
   if (results.length === 0) return;
 
-  const lines = results.map((r) => {
-    const sign = r.amount >= 0 ? '+' : '';
+  const embeds = results.map((r) => {
+    const isAdded = r.amount >= 0;
     const flag = r.item.created
-      ? ' 🆕 new item'
+      ? ' — 🆕 new item'
       : r.item.fuzzyMatched
-        ? ` (matched **${r.item.name}**)`
+        ? ` — matched **${r.item.name}**`
         : '';
-    return `${sign}${r.amount} ${r.item.name}${flag}`;
+    return new EmbedBuilder()
+      .setColor(isAdded ? COLOR_ADDED : COLOR_REMOVED)
+      .setDescription(
+        `**${Math.abs(r.amount)} ${r.item.name}** ${isAdded ? 'Added' : 'Removed'}${flag}`
+      );
   });
 
-  await message.reply(lines.join('\n'));
+  for (let i = 0; i < embeds.length; i += EMBEDS_PER_MESSAGE) {
+    await message.reply({ embeds: embeds.slice(i, i + EMBEDS_PER_MESSAGE) });
+  }
 }
