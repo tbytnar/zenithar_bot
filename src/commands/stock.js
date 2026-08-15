@@ -7,9 +7,11 @@ export const data = new SlashCommandBuilder()
 
 export async function execute(interaction) {
   const rows = await query(
-    `SELECT i.name, inv.quantity FROM inventory inv
-     JOIN items i ON i.id = inv.item_id
-     WHERE inv.quantity != 0
+    `SELECT i.name, SUM(l.quantity) AS quantity
+     FROM inventory_lots l
+     JOIN items i ON i.id = l.item_id
+     GROUP BY i.name
+     HAVING SUM(l.quantity) != 0
      ORDER BY i.name`
   );
 

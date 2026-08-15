@@ -41,6 +41,7 @@ replacing the `+item` message-scrollback system.
 - `/contribute add item: amount: for: credit: note:` — logs an input toward a contract
 - `/contribute undo` — removes your own most recent contribution
 - `/contract close for: payout_gold:` — locks the contract, computes and posts the split
+- `/contract sell name: items: payout_gold: destination:` — officers, sells items straight out of general inventory and credits contributors back (see below)
 - `/payout for:` — running totals if open, final breakdown if closed
 - `/stock` — shows current general inventory levels
 - `/item merge from: into:` — officers, folds a duplicate item (e.g. a typo) into another
@@ -56,16 +57,26 @@ Separate from contracts: post a message in the channel set by
 -8 Gourd
 ```
 
-— and the bot adjusts a running stock count per item (viewable via
-`/stock`), replying with what it applied. Item names are matched
-case-insensitively; a close-but-not-exact match (typo) resolves to the
-existing item via trigram similarity rather than creating a duplicate,
-and the bot flags in its reply whenever it fuzzy-matched or had to
-create a brand new item, so a genuine typo is visible immediately. If
-one does slip through as a real duplicate, `/item merge` folds it into
-the correct item (moving stock and any contract history along with it)
-and removes the duplicate. Anyone can post adjustments — this isn't
-restricted like `/contract create`/`close`.
+— and the bot adjusts stock per item (viewable via `/stock`), replying
+with a colored embed per line (green/Added, red/Removed) showing what it
+applied. Item names are matched case-insensitively; a close-but-not-exact
+match (typo) resolves to the existing item via trigram similarity rather
+than creating a duplicate, and the bot flags in its reply whenever it
+fuzzy-matched or had to create a brand new item, so a genuine typo is
+visible immediately. If one does slip through as a real duplicate,
+`/item merge` folds it into the correct item (moving stock and any
+contract history along with it) and removes the duplicate. Anyone can
+post adjustments — this isn't restricted like `/contract create`/`close`.
+
+Internally, every `+` addition is tracked as its own "lot" recording who
+contributed it (not just a running total) — that's what makes
+`/contract sell` possible: selling `15 Cabbage` looks at everyone
+currently holding Cabbage stock and credits each of them their
+proportional share of the payout, the same way a normal contract splits
+gold across contributors, just auto-logged instead of typed by hand.
+Selling more than is currently in stock is allowed — the shortfall is
+tracked as an unattributed deficit (nobody gets credited for gold on
+stock nobody actually contributed) rather than the sale being rejected.
 
 ## Permissions
 

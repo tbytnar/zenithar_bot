@@ -51,19 +51,26 @@ CREATE TABLE payouts (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Running stock levels, adjusted by +/- lines posted in the designated
--- inventory channel (see src/inventory.js). Separate from contract
--- contributions, which track input toward a specific contract's payout.
-CREATE TABLE inventory (
-    item_id         INT PRIMARY KEY REFERENCES items(id),
-    quantity        NUMERIC NOT NULL DEFAULT 0,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+-- Per-contribution stock ledger, adjusted by +/- lines posted in the
+-- designated inventory channel (see src/inventory.js) and by
+-- /contract sell. Each addition is its own lot so a later sale can
+-- credit contributors proportionally instead of tracking a single
+-- anonymous running total. member_id is NULL for an unattributed
+-- deficit lot, created when a removal exceeds available stock.
+CREATE TABLE inventory_lots (
+    id                  SERIAL PRIMARY KEY,
+    item_id             INT NOT NULL REFERENCES items(id),
+    member_id           BIGINT REFERENCES members(id),
+    quantity            NUMERIC NOT NULL,
+    original_quantity   NUMERIC NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_contributions_contract ON contributions(contract_id);
 CREATE INDEX idx_contracts_status ON contracts(status);
 CREATE INDEX idx_contracts_name_trgm ON contracts USING gin (name gin_trgm_ops);
 CREATE INDEX idx_items_name_trgm ON items USING gin (name gin_trgm_ops);
+CREATE INDEX idx_inventory_lots_item ON inventory_lots(item_id);
 
 -- Seed a few obvious items so autocomplete isn't empty on first run.
 -- Adjust unit_value later once you settle relative pricing (see README).

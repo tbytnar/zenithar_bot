@@ -43,16 +43,7 @@ export async function execute(interaction) {
 
   await query(`UPDATE contributions SET item_id = $1 WHERE item_id = $2`, [intoId, fromId]);
   await query(`UPDATE contracts SET target_item_id = $1 WHERE target_item_id = $2`, [intoId, fromId]);
-
-  const fromInventory = await query(`SELECT quantity FROM inventory WHERE item_id = $1`, [fromId]);
-  if (fromInventory.rows.length > 0) {
-    await query(
-      `INSERT INTO inventory (item_id, quantity, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (item_id) DO UPDATE SET quantity = inventory.quantity + $2, updated_at = now()`,
-      [intoId, fromInventory.rows[0].quantity]
-    );
-    await query(`DELETE FROM inventory WHERE item_id = $1`, [fromId]);
-  }
+  await query(`UPDATE inventory_lots SET item_id = $1 WHERE item_id = $2`, [intoId, fromId]);
 
   await query(`DELETE FROM items WHERE id = $1`, [fromId]);
 
