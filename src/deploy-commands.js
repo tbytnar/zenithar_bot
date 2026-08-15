@@ -4,8 +4,10 @@ import 'dotenv/config';
 import * as contract from './commands/contract.js';
 import * as contribute from './commands/contribute.js';
 import * as payout from './commands/payout.js';
+import * as stock from './commands/stock.js';
+import * as item from './commands/item.js';
 
-const commands = [contract, contribute, payout].map((c) => c.data.toJSON());
+const commands = [contract, contribute, payout, stock, item].map((c) => c.data.toJSON());
 
 const rest = new REST().setToken(process.env.DISCORD_TOKEN);
 

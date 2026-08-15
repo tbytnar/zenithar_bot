@@ -21,12 +21,15 @@ replacing the `+item` message-scrollback system.
    - Copy the Application ID → `DISCORD_CLIENT_ID`
    - Get your server's ID (enable Developer Mode, right-click server icon,
      Copy Server ID) → `DISCORD_GUILD_ID`
+   - Under **Bot**, enable the **Message Content Intent** (privileged
+     intent toggle) — required for general inventory tracking, see below.
+     Without this, `+15 Cabbage`-style messages won't be seen by the bot.
    - Invite the bot with the `applications.commands` and `bot` scopes,
      with permission to send messages / use slash commands in your channel
 
 3. **Install & configure**
    ```
-   cp .env.example .env   # fill in the four values above and DATABASE_URL
+   cp .env.example .env   # fill in the values above, INVENTORY_CHANNEL_ID, and DATABASE_URL
    npm install
    npm run deploy-commands
    npm start
@@ -35,10 +38,34 @@ replacing the `+item` message-scrollback system.
 ## Commands
 
 - `/contract create name: destination: target_item: target_quantity:` — officers, opens a contract
-- `/contribute add item: amount: for: credit: note:` — logs an input, replaces `+item` messages
+- `/contribute add item: amount: for: credit: note:` — logs an input toward a contract
 - `/contribute undo` — removes your own most recent contribution
 - `/contract close for: payout_gold:` — locks the contract, computes and posts the split
 - `/payout for:` — running totals if open, final breakdown if closed
+- `/stock` — shows current general inventory levels
+- `/item merge from: into:` — officers, folds a duplicate item (e.g. a typo) into another
+
+## General inventory tracking
+
+Separate from contracts: post a message in the channel set by
+`INVENTORY_CHANNEL_ID` with one item per line —
+
+```
++15 Cabbage
++10 Wheat
+-8 Gourd
+```
+
+— and the bot adjusts a running stock count per item (viewable via
+`/stock`), replying with what it applied. Item names are matched
+case-insensitively; a close-but-not-exact match (typo) resolves to the
+existing item via trigram similarity rather than creating a duplicate,
+and the bot flags in its reply whenever it fuzzy-matched or had to
+create a brand new item, so a genuine typo is visible immediately. If
+one does slip through as a real duplicate, `/item merge` folds it into
+the correct item (moving stock and any contract history along with it)
+and removes the duplicate. Anyone can post adjustments — this isn't
+restricted like `/contract create`/`close`.
 
 ## Permissions
 

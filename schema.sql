@@ -51,9 +51,19 @@ CREATE TABLE payouts (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Running stock levels, adjusted by +/- lines posted in the designated
+-- inventory channel (see src/inventory.js). Separate from contract
+-- contributions, which track input toward a specific contract's payout.
+CREATE TABLE inventory (
+    item_id         INT PRIMARY KEY REFERENCES items(id),
+    quantity        NUMERIC NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX idx_contributions_contract ON contributions(contract_id);
 CREATE INDEX idx_contracts_status ON contracts(status);
 CREATE INDEX idx_contracts_name_trgm ON contracts USING gin (name gin_trgm_ops);
+CREATE INDEX idx_items_name_trgm ON items USING gin (name gin_trgm_ops);
 
 -- Seed a few obvious items so autocomplete isn't empty on first run.
 -- Adjust unit_value later once you settle relative pricing (see README).

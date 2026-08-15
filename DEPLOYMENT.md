@@ -151,6 +151,19 @@ and replies work.
 cd ~/zenithar_bot && git pull && sudo docker compose up -d --build
 ```
 
+### Applying a database migration
+
+`schema.sql` only runs on a brand-new volume (via
+`docker-entrypoint-initdb.d`), so a schema change after go-live needs
+its matching file in `migrations/` applied by hand, once, in order:
+
+```bash
+sudo docker compose exec -T db psql -U keizaal -d keizaal_inventory < migrations/0002_inventory.sql
+```
+
+(swap in whichever migration file is new — check `migrations/` after a
+`git pull` for anything you haven't run yet)
+
 `restart: unless-stopped` on both services means the bot and DB also
 survive instance reboots and crashes automatically — no extra systemd
 unit needed, since Docker itself is enabled as a system service (step 2).
