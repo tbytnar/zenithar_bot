@@ -5,6 +5,10 @@ replacing the `+item` message-scrollback system. Multi-guild: one bot/
 database can serve any number of Discord servers, each fully isolated from
 the others.
 
+> Looking to **add this bot to your own server** rather than run a copy of
+> it? See [GETTING_STARTED.md](GETTING_STARTED.md) instead — this file is
+> for running/hosting the bot itself.
+
 ## Setup
 
 1. **Database**
