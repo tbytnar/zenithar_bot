@@ -155,9 +155,84 @@ cd ~/zenithar_bot && git pull && sudo docker compose up -d --build
 survive instance reboots and crashes automatically — no extra systemd
 unit needed, since Docker itself is enabled as a system service (step 2).
 
-## Backups (not automated yet)
+## Backups
 
-The Postgres data lives in a named Docker volume (`pgdata`) on the
-instance's root EBS volume. If you want point-in-time recovery beyond
-"the instance's disk still exists," consider a cron job running
-`pg_dump` to an S3 bucket — not set up here, ask if you want it added.
+Daily `pg_dump` to S3 via cron, authenticated through an IAM role
+attached to the instance (no AWS keys stored on disk). One-time setup:
+
+### B1. Create the S3 bucket (AWS Console)
+
+S3 console → **Create bucket**. Any unique name (e.g.
+`zenithar-bot-backups-<your-account-id>`). Defaults (encryption on,
+public access blocked) are fine — leave them.
+
+### B2. Create an IAM policy scoped to that bucket
+
+IAM console → **Policies** → **Create policy** → **JSON** tab, paste
+(substituting your bucket name for `BUCKET_NAME` in both places):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": "s3:PutObject", "Resource": "arn:aws:s3:::BUCKET_NAME/backups/*" },
+    { "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::BUCKET_NAME" }
+  ]
+}
+```
+
+Name it something like `zenithar-bot-backup-writer`, create it.
+
+### B3. Create an IAM role and attach it to the instance
+
+IAM console → **Roles** → **Create role** → trusted entity type
+**AWS service** → use case **EC2** → attach the policy from B2 →
+name it (e.g. `zenithar-bot-backup-role`) → create.
+
+Then: EC2 console → select the `keizaal-bot` instance → **Actions** →
+**Security** → **Modify IAM role** → pick the role you just made →
+**Update IAM role**. No reboot needed — the instance picks it up
+immediately via the metadata service.
+
+### B4. Install the AWS CLI and cron on the instance
+
+```bash
+bash deploy/install-backups.sh
+```
+
+Ends by printing `aws --version` — confirm it shows something before
+continuing.
+
+### B5. Set the bucket name and test a manual backup
+
+```bash
+grep -v '^BACKUP_S3_BUCKET=' .env > .env.tmp && mv .env.tmp .env && echo 'BACKUP_S3_BUCKET=REPLACE_ME' >> .env
+```
+
+(substitute your real bucket name for `REPLACE_ME`)
+
+```bash
+bash deploy/backup-db.sh
+```
+
+Should end with `Backup uploaded: s3://...`. Check the bucket in the
+S3 console to confirm the object landed in it.
+
+### B6. Schedule it daily via cron
+
+```bash
+(crontab -l 2>/dev/null; echo "0 6 * * * /home/ec2-user/zenithar_bot/deploy/backup-db.sh >> /home/ec2-user/backup.log 2>&1") | crontab -
+```
+
+Runs daily at 06:00 UTC. Confirm it's registered:
+
+```bash
+crontab -l
+```
+
+### Optional: auto-expire old backups
+
+S3 console → your bucket → **Management** tab → **Create lifecycle
+rule** → scope to prefix `backups/` → expire objects after however
+many days you want to retain (e.g. 30). Cheaper than deleting them
+from the script, and one less thing for `backup-db.sh` to get wrong.
