@@ -1,36 +1,62 @@
 import { EmbedBuilder } from 'discord.js';
 import { query, upsertMember } from './db.js';
+import { getGuildSettings, resolveGoldChannelId, currencyWords } from './guildSettings.js';
+import { recordLedgerEntry } from './treasury.js';
 
-const LINE_PATTERN = /^\s*([+-])\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
+const ITEM_LINE = /^\s*([+-])\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
 const COLOR_ADDED = 0x57f287; // Discord's "success" green
 const COLOR_REMOVED = 0xed4245; // Discord's "danger" red
 const EMBEDS_PER_MESSAGE = 10; // Discord's hard limit per message
 
+function escapeRegExp(word) {
+  return word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Builds a line pattern for this guild's configured currency words, e.g.
+// "-100 gold (buying carrots)" or "+200 septims (sold a book)". The note is
+// optional and, when present, becomes the ledger entry's note.
+function matchCurrencyLine(line, words) {
+  const alternation = words.map(escapeRegExp).join('|');
+  const pattern = new RegExp(
+    `^\\s*([+-])\\s*(\\d+(?:\\.\\d+)?)\\s+(?:${alternation})\\s*(?:\\(([^)]*)\\))?\\s*$`,
+    'i'
+  );
+  return line.match(pattern);
+}
+
 // Matches existing items on exact name first, then a trigram-similarity
 // fuzzy match (catches typos like "Cabage" -> "Cabbage"), and only creates
-// a new item if neither finds anything close.
-export async function resolveOrCreateItem(name) {
-  const exact = await query(`SELECT id, name FROM items WHERE lower(name) = lower($1)`, [name]);
+// a new item if neither finds anything close. Scoped to the guild's own
+// item catalog throughout. Pass `runQuery` as `client.query.bind(client)`
+// to run this as part of a larger transaction.
+export async function resolveOrCreateItem(guildId, name, runQuery = query) {
+  const exact = await runQuery(`SELECT id, name FROM items WHERE guild_id = $1 AND lower(name) = lower($2)`, [
+    guildId,
+    name,
+  ]);
   if (exact.rows.length > 0) return { ...exact.rows[0] };
 
-  const fuzzy = await query(
+  const fuzzy = await runQuery(
     `SELECT id, name FROM items
-     WHERE similarity(name, $1) > 0.4
-     ORDER BY similarity(name, $1) DESC
+     WHERE guild_id = $1 AND similarity(name, $2) > 0.4
+     ORDER BY similarity(name, $2) DESC
      LIMIT 1`,
-    [name]
+    [guildId, name]
   );
   if (fuzzy.rows.length > 0) return { ...fuzzy.rows[0], fuzzyMatched: true };
 
-  const created = await query(`INSERT INTO items (name) VALUES ($1) RETURNING id, name`, [name]);
+  const created = await runQuery(`INSERT INTO items (guild_id, name) VALUES ($1, $2) RETURNING id, name`, [
+    guildId,
+    name,
+  ]);
   return { ...created.rows[0], created: true };
 }
 
-export async function createLot(itemId, memberId, quantity) {
-  await query(
-    `INSERT INTO inventory_lots (item_id, member_id, quantity, original_quantity)
-     VALUES ($1, $2, $3, $3)`,
-    [itemId, memberId, quantity]
+export async function createLot(guildId, itemId, memberId, quantity, runQuery = query) {
+  await runQuery(
+    `INSERT INTO inventory_lots (guild_id, item_id, member_id, quantity, original_quantity)
+     VALUES ($1, $2, $3, $4, $4)`,
+    [guildId, itemId, memberId, quantity]
   );
 }
 
@@ -40,12 +66,15 @@ export async function createLot(itemId, memberId, quantity) {
 // from it credits each contributor their fair share rather than picking
 // one. If stock runs out, the remainder becomes an unattributed deficit
 // lot (negative balance, nobody credited) instead of being rejected.
-export async function consumeInventory(itemId, requestedQty) {
-  const lots = await query(
+// Pass `runQuery` as `client.query.bind(client)` to run this as part of a
+// larger transaction (see /contract sell).
+export async function consumeInventory(guildId, itemId, requestedQty, runQuery = query) {
+  const lots = await runQuery(
     `SELECT id, member_id, quantity FROM inventory_lots
-     WHERE item_id = $1 AND quantity > 0
-     ORDER BY created_at ASC`,
-    [itemId]
+     WHERE guild_id = $1 AND item_id = $2 AND quantity > 0
+     ORDER BY created_at ASC
+     FOR UPDATE`,
+    [guildId, itemId]
   );
 
   const totalAvailable = lots.rows.reduce((sum, l) => sum + Number(l.quantity), 0);
@@ -56,17 +85,17 @@ export async function consumeInventory(itemId, requestedQty) {
     for (const lot of lots.rows) {
       const take = Number(lot.quantity) * shareRatio;
       if (take <= 0) continue;
-      await query(`UPDATE inventory_lots SET quantity = quantity - $2 WHERE id = $1`, [lot.id, take]);
+      await runQuery(`UPDATE inventory_lots SET quantity = quantity - $2 WHERE id = $1`, [lot.id, take]);
       if (lot.member_id) consumed.push({ memberId: lot.member_id, quantity: take });
     }
   }
 
   const deficit = requestedQty - totalAvailable;
   if (deficit > 0) {
-    await query(
-      `INSERT INTO inventory_lots (item_id, member_id, quantity, original_quantity)
-       VALUES ($1, NULL, $2, $2)`,
-      [itemId, -deficit]
+    await runQuery(
+      `INSERT INTO inventory_lots (guild_id, item_id, member_id, quantity, original_quantity)
+       VALUES ($1, $2, NULL, $3, $3)`,
+      [guildId, itemId, -deficit]
     );
   }
 
@@ -75,32 +104,59 @@ export async function consumeInventory(itemId, requestedQty) {
 
 export async function handleInventoryMessage(message) {
   if (message.author.bot) return;
-  if (!process.env.INVENTORY_CHANNEL_ID) return;
-  if (message.channelId !== process.env.INVENTORY_CHANNEL_ID) return;
+  if (!message.guildId) return; // ignore DMs
 
-  const results = [];
+  const settings = await getGuildSettings(message.guildId);
+  const inventoryChannelId = settings.inventory_channel_id;
+  const goldChannelId = resolveGoldChannelId(settings);
+  const isInventoryChannel = Boolean(inventoryChannelId) && message.channelId === inventoryChannelId;
+  const isGoldChannel = Boolean(goldChannelId) && message.channelId === goldChannelId;
+  if (!isInventoryChannel && !isGoldChannel) return;
+
+  const words = currencyWords(settings);
+  const itemResults = [];
+  const goldResults = [];
 
   for (const line of message.content.split('\n')) {
-    const match = line.match(LINE_PATTERN);
+    const goldMatch = isGoldChannel && matchCurrencyLine(line, words);
+    if (goldMatch) {
+      const [, sign, amountStr, note] = goldMatch;
+      const amount = Number(amountStr);
+      const delta = sign === '+' ? amount : -amount;
+
+      await upsertMember(message.guildId, message.author);
+      await recordLedgerEntry({
+        guildId: message.guildId,
+        memberId: message.author.id,
+        deltaGold: delta,
+        reason: 'manual',
+        note: note || null,
+      });
+      goldResults.push({ delta, note });
+      continue;
+    }
+
+    if (!isInventoryChannel) continue;
+    const match = line.match(ITEM_LINE);
     if (!match) continue;
 
     const [, sign, amountStr, rawName] = match;
     const amount = Number(amountStr);
-    const item = await resolveOrCreateItem(rawName.trim());
+    const item = await resolveOrCreateItem(message.guildId, rawName.trim());
 
     if (sign === '+') {
-      await upsertMember(message.author);
-      await createLot(item.id, message.author.id, amount);
-      results.push({ item, amount });
+      await upsertMember(message.guildId, message.author);
+      await createLot(message.guildId, item.id, message.author.id, amount);
+      itemResults.push({ item, amount });
     } else {
-      await consumeInventory(item.id, amount);
-      results.push({ item, amount: -amount });
+      await consumeInventory(message.guildId, item.id, amount);
+      itemResults.push({ item, amount: -amount });
     }
   }
 
-  if (results.length === 0) return;
+  if (itemResults.length === 0 && goldResults.length === 0) return;
 
-  const embeds = results.map((r) => {
+  const itemEmbeds = itemResults.map((r) => {
     const isAdded = r.amount >= 0;
     const flag = r.item.created
       ? ' — 🆕 new item'
@@ -114,6 +170,16 @@ export async function handleInventoryMessage(message) {
       );
   });
 
+  const goldEmbeds = goldResults.map((r) => {
+    const isAdded = r.delta >= 0;
+    return new EmbedBuilder()
+      .setColor(isAdded ? COLOR_ADDED : COLOR_REMOVED)
+      .setDescription(
+        `**${Math.abs(r.delta)}g** ${isAdded ? 'Added to' : 'Removed from'} treasury${r.note ? ` — ${r.note}` : ''}`
+      );
+  });
+
+  const embeds = [...itemEmbeds, ...goldEmbeds];
   for (let i = 0; i < embeds.length; i += EMBEDS_PER_MESSAGE) {
     await message.reply({ embeds: embeds.slice(i, i + EMBEDS_PER_MESSAGE) });
   }

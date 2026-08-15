@@ -6,6 +6,8 @@ import * as contribute from './commands/contribute.js';
 import * as payout from './commands/payout.js';
 import * as stock from './commands/stock.js';
 import * as item from './commands/item.js';
+import * as settings from './commands/settings.js';
+import * as treasury from './commands/treasury.js';
 import { handleInventoryMessage } from './inventory.js';
 
 const client = new Client({
@@ -17,7 +19,7 @@ const client = new Client({
 });
 
 client.commands = new Collection();
-for (const cmd of [contract, contribute, payout, stock, item]) {
+for (const cmd of [contract, contribute, payout, stock, item, settings, treasury]) {
   client.commands.set(cmd.data.name, cmd);
 }
 
@@ -34,6 +36,15 @@ client.on('messageCreate', async (message) => {
 });
 
 client.on('interactionCreate', async (interaction) => {
+  if (interaction.isChatInputCommand() || interaction.isAutocomplete()) {
+    if (!interaction.guildId) {
+      if (interaction.isChatInputCommand()) {
+        await interaction.reply({ content: 'This bot only works inside a server.', ephemeral: true });
+      }
+      return;
+    }
+  }
+
   const command = client.commands.get(interaction.commandName);
   if (!command) return;
 
@@ -48,8 +59,10 @@ client.on('interactionCreate', async (interaction) => {
     }
   } catch (err) {
     console.error(err);
-    if (interaction.isChatInputCommand() && !interaction.replied) {
+    if (interaction.isChatInputCommand() && !interaction.replied && !interaction.deferred) {
       await interaction.reply({ content: 'Something went wrong running that command.', ephemeral: true });
+    } else if (interaction.isChatInputCommand() && interaction.deferred) {
+      await interaction.editReply('Something went wrong running that command.');
     }
   }
 });

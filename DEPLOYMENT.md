@@ -83,7 +83,7 @@ Start from the template:
 cp .env.example .env
 ```
 
-Then run each of these four, substituting your real value into each one
+Then run each of these three, substituting your real value into each one
 before you paste it (fill them in from a notes app if that's easier —
 just don't send secrets to anyone else, AI included, while doing it):
 
@@ -96,17 +96,17 @@ sed -i "s|^DISCORD_CLIENT_ID=.*|DISCORD_CLIENT_ID=REPLACE_ME|" .env
 ```
 
 ```bash
-sed -i "s|^DISCORD_GUILD_ID=.*|DISCORD_GUILD_ID=REPLACE_ME|" .env
-```
-
-```bash
 sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=REPLACE_ME|" .env
 ```
 
-Get `DISCORD_TOKEN` / `DISCORD_CLIENT_ID` / `DISCORD_GUILD_ID` from your
-Discord application (see README.md for where). For
-`POSTGRES_PASSWORD`, any strong random string works. The `DATABASE_URL`
-line in `.env` is unused by Compose — leave it as the template default.
+Get `DISCORD_TOKEN` / `DISCORD_CLIENT_ID` from your Discord application
+(see README.md for where, including the bot-permissions/invite-link
+section). For `POSTGRES_PASSWORD`, any strong random string works. The
+`DATABASE_URL` line in `.env` is unused by Compose — leave it as the
+template default. There's no `DISCORD_GUILD_ID` or `INVENTORY_CHANNEL_ID`
+to set here anymore — the bot works in any server it's invited to, and
+each server's channels are configured in Discord itself via
+`/settings channels` after step 5.
 
 ## 4. Bring it up
 
@@ -140,10 +140,17 @@ stop following).
 sudo docker compose run --rm bot node src/deploy-commands.js
 ```
 
+Commands register **globally** (every server the bot is in, not just one),
+which can take up to ~1hr to propagate on first run. Re-running this after
+a future command change is the same story — existing servers won't see the
+update instantly.
+
 ## 6. Confirm it's alive
 
-In Discord, run `/payout for:` (or any command) and confirm autocomplete
-and replies work.
+Invite the bot to a server (see README.md's OAuth2 invite-link section),
+then in that server run `/settings channels inventory:#your-channel` to
+point it at your inventory channel, and `/payout for:` (or any other
+command) to confirm autocomplete and replies work.
 
 ## Updating after a code change
 
@@ -167,6 +174,39 @@ sudo docker compose exec -T db psql -U keizaal -d keizaal_inventory < migrations
 `restart: unless-stopped` on both services means the bot and DB also
 survive instance reboots and crashes automatically — no extra systemd
 unit needed, since Docker itself is enabled as a system service (step 2).
+
+### One-time: migrating an existing deployment to multi-guild
+
+If this instance predates multi-guild support, `migrations/0004_multiguild.sql`
+needs one edit before you run it — it backfills every existing row with
+the one guild this database has served so far, from the `DISCORD_GUILD_ID`
+value your old `.env` used to have:
+
+```bash
+sed -i "s/000000000000000000/YOUR_ACTUAL_GUILD_ID/" migrations/0004_multiguild.sql
+```
+
+```bash
+sudo docker compose exec -T db psql -U keizaal -d keizaal_inventory < migrations/0004_multiguild.sql
+```
+
+Then, since commands used to be registered per-guild and are now global,
+clear out the old guild-scoped registration once — otherwise Discord shows
+every command twice in that one server until you do:
+
+```bash
+sudo docker compose run --rm bot node -e "
+import('discord.js').then(async ({ REST, Routes }) => {
+  const rest = new REST().setToken(process.env.DISCORD_TOKEN);
+  await rest.put(Routes.applicationGuildCommands(process.env.DISCORD_CLIENT_ID, 'YOUR_ACTUAL_GUILD_ID'), { body: [] });
+  console.log('Cleared old guild-scoped commands.');
+});
+"
+```
+
+Re-run step 5 (`deploy-commands.js`) if you haven't already to register the
+global commands, then run `/settings channels inventory:#your-old-channel`
+in that server to restore what `INVENTORY_CHANNEL_ID` used to do.
 
 ## Backups
 

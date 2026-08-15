@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { query } from '../db.js';
-import { contractAutocompleteLabel } from '../format.js';
+import { contractChoices } from '../autocomplete.js';
 
 export const data = new SlashCommandBuilder()
   .setName('payout')
@@ -10,11 +10,13 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction) {
+  const guildId = interaction.guildId;
   const contractId = interaction.options.getString('for');
 
-  const contract = await query(`SELECT name, status, payout_gold, destination FROM contracts WHERE id = $1`, [
-    contractId,
-  ]);
+  const contract = await query(
+    `SELECT name, status, payout_gold, destination FROM contracts WHERE id = $1 AND guild_id = $2`,
+    [contractId, guildId]
+  );
   if (contract.rows.length === 0) {
     await interaction.reply({ content: 'Contract not found.', ephemeral: true });
     return;
@@ -24,9 +26,9 @@ export async function execute(interaction) {
 
   if (status === 'closed') {
     const payouts = await query(
-      `SELECT member_id, share_pct, gold_awarded, paid FROM payouts WHERE contract_id = $1
+      `SELECT member_id, share_pct, gold_awarded, paid FROM payouts WHERE contract_id = $1 AND guild_id = $2
        ORDER BY gold_awarded DESC`,
-      [contractId]
+      [contractId, guildId]
     );
 
     if (payouts.rows.length === 0) {
@@ -51,10 +53,10 @@ export async function execute(interaction) {
   const totals = await query(
     `SELECT c.credit_id, SUM(c.quantity * i.unit_value) AS weighted_input
      FROM contributions c JOIN items i ON i.id = c.item_id
-     WHERE c.contract_id = $1
+     WHERE c.contract_id = $1 AND c.guild_id = $2
      GROUP BY c.credit_id
      ORDER BY weighted_input DESC`,
-    [contractId]
+    [contractId, guildId]
   );
 
   if (totals.rows.length === 0) {
@@ -72,15 +74,7 @@ export async function execute(interaction) {
 }
 
 export async function autocomplete(interaction) {
+  const guildId = interaction.guildId;
   const focused = interaction.options.getFocused();
-  const rows = await query(
-    `SELECT id, name, created_at FROM contracts WHERE name ILIKE $1 ORDER BY created_at DESC LIMIT 25`,
-    [`%${focused}%`]
-  );
-  await interaction.respond(
-    rows.rows.map((r) => ({
-      name: contractAutocompleteLabel(r.name, r.created_at),
-      value: String(r.id),
-    }))
-  );
+  await interaction.respond(await contractChoices(guildId, focused, { openOnly: false }));
 }

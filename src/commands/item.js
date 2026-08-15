@@ -1,5 +1,6 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { query } from '../db.js';
+import { query, withTransaction } from '../db.js';
+import { itemChoices } from '../autocomplete.js';
 
 export const data = new SlashCommandBuilder()
   .setName('item')
@@ -22,6 +23,7 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction) {
+  const guildId = interaction.guildId;
   const sub = interaction.options.getSubcommand();
   if (sub !== 'merge') return;
 
@@ -33,7 +35,11 @@ export async function execute(interaction) {
     return;
   }
 
-  const items = await query(`SELECT id, name FROM items WHERE id IN ($1, $2)`, [fromId, intoId]);
+  const items = await query(`SELECT id, name FROM items WHERE id IN ($1, $2) AND guild_id = $3`, [
+    fromId,
+    intoId,
+    guildId,
+  ]);
   if (items.rows.length !== 2) {
     await interaction.reply({ content: 'Could not find both items.', ephemeral: true });
     return;
@@ -41,19 +47,31 @@ export async function execute(interaction) {
   const fromItem = items.rows.find((r) => String(r.id) === fromId);
   const intoItem = items.rows.find((r) => String(r.id) === intoId);
 
-  await query(`UPDATE contributions SET item_id = $1 WHERE item_id = $2`, [intoId, fromId]);
-  await query(`UPDATE contracts SET target_item_id = $1 WHERE target_item_id = $2`, [intoId, fromId]);
-  await query(`UPDATE inventory_lots SET item_id = $1 WHERE item_id = $2`, [intoId, fromId]);
-
-  await query(`DELETE FROM items WHERE id = $1`, [fromId]);
+  await withTransaction(async (client) => {
+    const run = client.query.bind(client);
+    await run(`UPDATE contributions SET item_id = $1 WHERE item_id = $2 AND guild_id = $3`, [
+      intoId,
+      fromId,
+      guildId,
+    ]);
+    await run(`UPDATE contracts SET target_item_id = $1 WHERE target_item_id = $2 AND guild_id = $3`, [
+      intoId,
+      fromId,
+      guildId,
+    ]);
+    await run(`UPDATE inventory_lots SET item_id = $1 WHERE item_id = $2 AND guild_id = $3`, [
+      intoId,
+      fromId,
+      guildId,
+    ]);
+    await run(`DELETE FROM items WHERE id = $1 AND guild_id = $2`, [fromId, guildId]);
+  });
 
   await interaction.reply(`Merged **${fromItem.name}** into **${intoItem.name}**.`);
 }
 
 export async function autocomplete(interaction) {
+  const guildId = interaction.guildId;
   const focused = interaction.options.getFocused();
-  const rows = await query(`SELECT id, name FROM items WHERE name ILIKE $1 ORDER BY name LIMIT 25`, [
-    `%${focused}%`,
-  ]);
-  await interaction.respond(rows.rows.map((r) => ({ name: r.name, value: String(r.id) })));
+  await interaction.respond(await itemChoices(guildId, focused));
 }

@@ -1,6 +1,6 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { query, upsertMember } from '../db.js';
-import { contractAutocompleteLabel } from '../format.js';
+import { itemChoices, contractChoices } from '../autocomplete.js';
 
 export const data = new SlashCommandBuilder()
   .setName('contribute')
@@ -13,7 +13,7 @@ export const data = new SlashCommandBuilder()
         opt.setName('item').setDescription('Item name').setRequired(true).setAutocomplete(true)
       )
       .addNumberOption((opt) =>
-        opt.setName('amount').setDescription('Quantity').setRequired(true)
+        opt.setName('amount').setDescription('Quantity').setRequired(true).setMinValue(0)
       )
       .addStringOption((opt) =>
         opt
@@ -32,7 +32,8 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction) {
-  await upsertMember(interaction.user);
+  const guildId = interaction.guildId;
+  await upsertMember(guildId, interaction.user);
   const sub = interaction.options.getSubcommand();
 
   if (sub === 'add') {
@@ -42,14 +43,19 @@ export async function execute(interaction) {
     const creditUser = interaction.options.getUser('credit') ?? interaction.user;
     const note = interaction.options.getString('note');
 
+    if (amount <= 0) {
+      await interaction.reply({ content: 'Amount must be greater than zero.', ephemeral: true });
+      return;
+    }
+
     if (creditUser.id !== interaction.user.id) {
-      await upsertMember(creditUser);
+      await upsertMember(guildId, creditUser);
     }
 
     await query(
-      `INSERT INTO contributions (contract_id, item_id, quantity, author_id, credit_id, note)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [contractId, itemId, amount, interaction.user.id, creditUser.id, note]
+      `INSERT INTO contributions (guild_id, contract_id, item_id, quantity, author_id, credit_id, note)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [guildId, contractId, itemId, amount, interaction.user.id, creditUser.id, note]
     );
 
     await interaction.reply(
@@ -61,9 +67,9 @@ export async function execute(interaction) {
   if (sub === 'undo') {
     const last = await query(
       `SELECT id, item_id, quantity FROM contributions
-       WHERE author_id = $1
+       WHERE author_id = $1 AND guild_id = $2
        ORDER BY created_at DESC LIMIT 1`,
-      [interaction.user.id]
+      [interaction.user.id, guildId]
     );
 
     if (last.rows.length === 0) {
@@ -77,27 +83,15 @@ export async function execute(interaction) {
 }
 
 export async function autocomplete(interaction) {
+  const guildId = interaction.guildId;
   const focused = interaction.options.getFocused(true);
 
   if (focused.name === 'item') {
-    const rows = await query(`SELECT id, name FROM items WHERE name ILIKE $1 LIMIT 25`, [
-      `%${focused.value}%`,
-    ]);
-    await interaction.respond(rows.rows.map((r) => ({ name: r.name, value: String(r.id) })));
+    await interaction.respond(await itemChoices(guildId, focused.value));
     return;
   }
 
   if (focused.name === 'for') {
-    const rows = await query(
-      `SELECT id, name, created_at FROM contracts WHERE status = 'open' AND name ILIKE $1
-       ORDER BY created_at DESC LIMIT 25`,
-      [`%${focused.value}%`]
-    );
-    await interaction.respond(
-      rows.rows.map((r) => ({
-        name: contractAutocompleteLabel(r.name, r.created_at),
-        value: String(r.id),
-      }))
-    );
+    await interaction.respond(await contractChoices(guildId, focused.value, { openOnly: true }));
   }
 }

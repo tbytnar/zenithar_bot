@@ -1,9 +1,20 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
-import { query, upsertMember } from '../db.js';
-import { contractAutocompleteLabel } from '../format.js';
+import { query, upsertMember, withTransaction } from '../db.js';
+import { itemChoices, contractChoices } from '../autocomplete.js';
 import { resolveOrCreateItem, consumeInventory, createLot } from '../inventory.js';
+import { recordLedgerEntry } from '../treasury.js';
 
-const SELL_ITEM_LINE = /^\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
+const ITEM_LINE = /^\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
+
+// Parses "<quantity> <item name>" lines, one per line, as used by both
+// /contract sell and /contract buy.
+function parseItemLines(text) {
+  return text
+    .split('\n')
+    .map((line) => line.match(ITEM_LINE))
+    .filter(Boolean)
+    .map(([, qtyStr, rawName]) => ({ quantity: Number(qtyStr), name: rawName.trim() }));
+}
 
 export const data = new SlashCommandBuilder()
   .setName('contract')
@@ -26,7 +37,7 @@ export const data = new SlashCommandBuilder()
           .setAutocomplete(true)
       )
       .addNumberOption((opt) =>
-        opt.setName('target_quantity').setDescription('How much is needed')
+        opt.setName('target_quantity').setDescription('How much is needed').setMinValue(0)
       )
   )
   .addSubcommand((sub) =>
@@ -45,6 +56,7 @@ export const data = new SlashCommandBuilder()
           .setName('payout_gold')
           .setDescription('Total gold to split among contributors')
           .setRequired(true)
+          .setMinValue(0)
       )
   )
   .addSubcommand((sub) =>
@@ -65,6 +77,7 @@ export const data = new SlashCommandBuilder()
           .setName('payout_gold')
           .setDescription('Total gold from the sale to split among contributors')
           .setRequired(true)
+          .setMinValue(0)
       )
       .addStringOption((opt) =>
         opt.setName('destination').setDescription('Buyer or destination')
@@ -84,7 +97,11 @@ export const data = new SlashCommandBuilder()
           .setRequired(true)
       )
       .addNumberOption((opt) =>
-        opt.setName('cost_gold').setDescription('Total gold spent on this purchase').setRequired(true)
+        opt
+          .setName('cost_gold')
+          .setDescription('Total gold spent on this purchase')
+          .setRequired(true)
+          .setMinValue(0)
       )
       .addStringOption((opt) =>
         opt.setName('source').setDescription('Vendor or where it was bought from')
@@ -92,7 +109,8 @@ export const data = new SlashCommandBuilder()
   );
 
 export async function execute(interaction) {
-  await upsertMember(interaction.user);
+  const guildId = interaction.guildId;
+  await upsertMember(guildId, interaction.user);
   const sub = interaction.options.getSubcommand();
 
   if (sub === 'create') {
@@ -102,9 +120,9 @@ export async function execute(interaction) {
     const targetQty = interaction.options.getNumber('target_quantity');
 
     const result = await query(
-      `INSERT INTO contracts (name, destination, target_item_id, target_quantity)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [name, destination, targetItemId, targetQty]
+      `INSERT INTO contracts (guild_id, name, destination, target_item_id, target_quantity)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [guildId, name, destination, targetItemId, targetQty]
     );
 
     await interaction.reply(
@@ -117,16 +135,35 @@ export async function execute(interaction) {
     const contractId = interaction.options.getString('for');
     const payoutGold = interaction.options.getNumber('payout_gold');
 
-    const existing = await query(`SELECT 1 FROM contributions WHERE contract_id = $1 LIMIT 1`, [
+    const contractRow = await query(`SELECT status FROM contracts WHERE id = $1 AND guild_id = $2`, [
       contractId,
+      guildId,
     ]);
+    if (contractRow.rows.length === 0) {
+      await interaction.reply({ content: 'Contract not found.', ephemeral: true });
+      return;
+    }
+    if (contractRow.rows[0].status !== 'open') {
+      await interaction.reply({ content: 'This contract is already closed.', ephemeral: true });
+      return;
+    }
+
+    const existing = await query(
+      `SELECT 1 FROM contributions WHERE contract_id = $1 AND guild_id = $2 LIMIT 1`,
+      [contractId, guildId]
+    );
     if (existing.rows.length === 0) {
       await interaction.reply('No contributions logged for this contract — nothing to split.');
       return;
     }
 
-    const lines = await computeAndRecordPayout(contractId, payoutGold);
-    await interaction.reply(`**Contract closed — ${payoutGold}g split:**\n${lines.join('\n')}`);
+    await interaction.deferReply();
+    const lines = await withTransaction((client) =>
+      computeAndRecordPayout(client.query.bind(client), guildId, contractId, payoutGold, {
+        creditSaleToTreasury: false,
+      })
+    );
+    await interaction.editReply(`**Contract closed — ${payoutGold}g split:**\n${lines.join('\n')}`);
     return;
   }
 
@@ -136,11 +173,7 @@ export async function execute(interaction) {
     const itemsText = interaction.options.getString('items');
     const payoutGold = interaction.options.getNumber('payout_gold');
 
-    const itemLines = itemsText
-      .split('\n')
-      .map((line) => line.match(SELL_ITEM_LINE))
-      .filter(Boolean);
-
+    const itemLines = parseItemLines(itemsText);
     if (itemLines.length === 0) {
       await interaction.reply({
         content: 'Could not parse any items — use one "<quantity> <item name>" per line.',
@@ -149,43 +182,47 @@ export async function execute(interaction) {
       return;
     }
 
-    const contractResult = await query(
-      `INSERT INTO contracts (name, destination, status) VALUES ($1, $2, 'open') RETURNING id`,
-      [name, destination]
-    );
-    const contractId = contractResult.rows[0].id;
+    await interaction.deferReply();
 
-    for (const match of itemLines) {
-      const [, qtyStr, rawName] = match;
-      const quantity = Number(qtyStr);
-      const item = await resolveOrCreateItem(rawName.trim());
-      const consumed = await consumeInventory(item.id, quantity);
+    const lines = await withTransaction(async (client) => {
+      const run = client.query.bind(client);
+      const contractResult = await run(
+        `INSERT INTO contracts (guild_id, name, destination, status) VALUES ($1, $2, $3, 'open') RETURNING id`,
+        [guildId, name, destination]
+      );
+      const contractId = contractResult.rows[0].id;
 
-      const byMember = new Map();
-      for (const c of consumed) {
-        byMember.set(c.memberId, (byMember.get(c.memberId) ?? 0) + c.quantity);
+      for (const { quantity, name: itemName } of itemLines) {
+        const item = await resolveOrCreateItem(guildId, itemName, run);
+        const consumed = await consumeInventory(guildId, item.id, quantity, run);
+
+        const byMember = new Map();
+        for (const c of consumed) {
+          byMember.set(c.memberId, (byMember.get(c.memberId) ?? 0) + c.quantity);
+        }
+
+        for (const [memberId, memberQty] of byMember) {
+          await run(
+            `INSERT INTO contributions (guild_id, contract_id, item_id, quantity, author_id, credit_id, note)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [guildId, contractId, item.id, memberQty, interaction.user.id, memberId, 'Sold from inventory']
+          );
+        }
       }
 
-      for (const [memberId, memberQty] of byMember) {
-        await query(
-          `INSERT INTO contributions (contract_id, item_id, quantity, author_id, credit_id, note)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [contractId, item.id, memberQty, interaction.user.id, memberId, 'Sold from inventory']
-        );
-      }
-    }
+      return computeAndRecordPayout(run, guildId, contractId, payoutGold, { creditSaleToTreasury: true });
+    });
 
-    const lines = await computeAndRecordPayout(contractId, payoutGold);
     const label = `**${name}**${destination ? ` sold to ${destination}` : ' sold'}`;
 
     if (lines.length === 0) {
-      await interaction.reply(
+      await interaction.editReply(
         `${label} for **${payoutGold}g** — no eligible contributors to credit (stock was unattributed or oversold).`
       );
       return;
     }
 
-    await interaction.reply(`${label} — **${payoutGold}g** split:\n${lines.join('\n')}`);
+    await interaction.editReply(`${label} — **${payoutGold}g** split:\n${lines.join('\n')}`);
     return;
   }
 
@@ -195,11 +232,7 @@ export async function execute(interaction) {
     const itemsText = interaction.options.getString('items');
     const costGold = interaction.options.getNumber('cost_gold');
 
-    const itemLines = itemsText
-      .split('\n')
-      .map((line) => line.match(SELL_ITEM_LINE))
-      .filter(Boolean);
-
+    const itemLines = parseItemLines(itemsText);
     if (itemLines.length === 0) {
       await interaction.reply({
         content: 'Could not parse any items — use one "<quantity> <item name>" per line.',
@@ -208,39 +241,53 @@ export async function execute(interaction) {
       return;
     }
 
-    const contractResult = await query(
-      `INSERT INTO contracts (name, destination, status, payout_gold, closed_at)
-       VALUES ($1, $2, 'closed', $3, now()) RETURNING id`,
-      [name, source, costGold]
-    );
+    await interaction.deferReply();
 
-    const purchased = [];
-    for (const match of itemLines) {
-      const [, qtyStr, rawName] = match;
-      const quantity = Number(qtyStr);
-      const item = await resolveOrCreateItem(rawName.trim());
-      await createLot(item.id, null, quantity);
-      purchased.push(`${quantity} ${item.name}`);
-    }
+    const purchased = await withTransaction(async (client) => {
+      const run = client.query.bind(client);
+      const contractResult = await run(
+        `INSERT INTO contracts (guild_id, name, destination, status, payout_gold, closed_at)
+         VALUES ($1, $2, $3, 'closed', $4, now()) RETURNING id`,
+        [guildId, name, source, costGold]
+      );
+      const contractId = contractResult.rows[0].id;
 
-    await interaction.reply(
+      const purchased = [];
+      for (const { quantity, name: itemName } of itemLines) {
+        const item = await resolveOrCreateItem(guildId, itemName, run);
+        await createLot(guildId, item.id, null, quantity, run);
+        purchased.push(`${quantity} ${item.name}`);
+      }
+
+      await recordLedgerEntry({ guildId, contractId, deltaGold: -costGold, reason: 'purchase' }, run);
+
+      return purchased;
+    });
+
+    await interaction.editReply(
       `**${name}** — bought${source ? ` from ${source}` : ''} for **${costGold}g**: ${purchased.join(', ')}.`
     );
   }
 }
 
-// Shared by /contract close (after confirming contributions exist) and
-// /contract sell (which always finalizes, even with nothing to credit -
-// the sale still happened and consumed real inventory either way).
-async function computeAndRecordPayout(contractId, payoutGold) {
-  const totals = await query(
+// Shared by /contract close and /contract sell. `creditSaleToTreasury`
+// credits the full payout amount into the treasury ledger first (a sale
+// brought that gold in) before debiting each contributor's share back out;
+// a plain close just debits contributors directly, since that gold is
+// assumed to already be in the guild's hands (see the treasury design notes).
+async function computeAndRecordPayout(runQuery, guildId, contractId, payoutGold, { creditSaleToTreasury }) {
+  const totals = await runQuery(
     `SELECT c.credit_id, SUM(c.quantity * i.unit_value) AS weighted_input
      FROM contributions c
      JOIN items i ON i.id = c.item_id
-     WHERE c.contract_id = $1
+     WHERE c.contract_id = $1 AND c.guild_id = $2
      GROUP BY c.credit_id`,
-    [contractId]
+    [contractId, guildId]
   );
+
+  if (creditSaleToTreasury) {
+    await recordLedgerEntry({ guildId, contractId, deltaGold: payoutGold, reason: 'sale' }, runQuery);
+  }
 
   const lines = [];
   if (totals.rows.length > 0) {
@@ -250,46 +297,39 @@ async function computeAndRecordPayout(contractId, payoutGold) {
       const sharePct = Number(row.weighted_input) / grandTotal;
       const goldAwarded = sharePct * payoutGold;
 
-      await query(
-        `INSERT INTO payouts (contract_id, member_id, input_value, share_pct, gold_awarded)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [contractId, row.credit_id, row.weighted_input, sharePct, goldAwarded]
+      await runQuery(
+        `INSERT INTO payouts (guild_id, contract_id, member_id, input_value, share_pct, gold_awarded)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [guildId, contractId, row.credit_id, row.weighted_input, sharePct, goldAwarded]
+      );
+
+      await recordLedgerEntry(
+        { guildId, contractId, memberId: row.credit_id, deltaGold: -goldAwarded, reason: 'payout' },
+        runQuery
       );
 
       lines.push(`<@${row.credit_id}>: ${(sharePct * 100).toFixed(1)}% — ${goldAwarded.toFixed(0)}g`);
     }
   }
 
-  await query(
-    `UPDATE contracts SET status = 'closed', payout_gold = $2, closed_at = now() WHERE id = $1`,
-    [contractId, payoutGold]
+  await runQuery(
+    `UPDATE contracts SET status = 'closed', payout_gold = $2, closed_at = now() WHERE id = $1 AND guild_id = $3`,
+    [contractId, payoutGold, guildId]
   );
 
   return lines;
 }
 
 export async function autocomplete(interaction) {
+  const guildId = interaction.guildId;
   const focused = interaction.options.getFocused(true);
 
   if (focused.name === 'target_item') {
-    const rows = await query(`SELECT id, name FROM items WHERE name ILIKE $1 LIMIT 25`, [
-      `%${focused.value}%`,
-    ]);
-    await interaction.respond(rows.rows.map((r) => ({ name: r.name, value: String(r.id) })));
+    await interaction.respond(await itemChoices(guildId, focused.value));
     return;
   }
 
   if (focused.name === 'for') {
-    const rows = await query(
-      `SELECT id, name, created_at FROM contracts WHERE status = 'open' AND name ILIKE $1
-       ORDER BY created_at DESC LIMIT 25`,
-      [`%${focused.value}%`]
-    );
-    await interaction.respond(
-      rows.rows.map((r) => ({
-        name: contractAutocompleteLabel(r.name, r.created_at),
-        value: String(r.id),
-      }))
-    );
+    await interaction.respond(await contractChoices(guildId, focused.value, { openOnly: true }));
   }
 }

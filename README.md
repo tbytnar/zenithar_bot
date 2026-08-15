@@ -1,39 +1,62 @@
 # Keizaal Inventory Bot
 
 Discord bot for tracking contract contributions and splitting payouts,
-replacing the `+item` message-scrollback system.
+replacing the `+item` message-scrollback system. Multi-guild: one bot/
+database can serve any number of Discord servers, each fully isolated from
+the others.
 
 ## Setup
 
 1. **Database**
    ```
    createdb keizaal_inventory
-   psql keizaal_inventory -f db/schema.sql
+   psql keizaal_inventory -f schema.sql
    ```
-   The schema seeds a handful of items (Charcoal, Coke, Firewood, and the
-   farm crops) with `unit_value = 1`. Update those once you decide how
-   different materials should weigh against each other in mixed-item
-   contracts — see the open question below.
 
 2. **Discord application**
    - Create an application at https://discord.com/developers/applications
    - Add a Bot user, copy the token → `DISCORD_TOKEN`
    - Copy the Application ID → `DISCORD_CLIENT_ID`
-   - Get your server's ID (enable Developer Mode, right-click server icon,
-     Copy Server ID) → `DISCORD_GUILD_ID`
    - Under **Bot**, enable the **Message Content Intent** (privileged
-     intent toggle) — required for general inventory tracking, see below.
-     Without this, `+15 Cabbage`-style messages won't be seen by the bot.
-   - Invite the bot with the `applications.commands` and `bot` scopes,
-     with permission to send messages / use slash commands in your channel
+     intent toggle) — required for general inventory/gold tracking, see
+     below. Without this, `+15 Cabbage`-style messages won't be seen by
+     the bot.
+   - Under **OAuth2 → URL Generator**, check scopes **`bot`** and
+     **`applications.commands`**, and under **Bot Permissions** check:
+     - **View Channels**
+     - **Send Messages**
+     - **Embed Links** (the colored inventory/gold reply embeds need this)
+
+     That's permission integer `19456`, so this invite link also works
+     directly — swap in your own `DISCORD_CLIENT_ID`:
+     ```
+     https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot+applications.commands&permissions=19456
+     ```
+   - Use that link to invite the bot to any server it should run in —
+     there's no per-server allowlist or guild ID to configure ahead of
+     time, any server admin can add it.
 
 3. **Install & configure**
    ```
-   cp .env.example .env   # fill in the values above, INVENTORY_CHANNEL_ID, and DATABASE_URL
+   cp .env.example .env   # fill in DISCORD_TOKEN, DISCORD_CLIENT_ID, DATABASE_URL
    npm install
    npm run deploy-commands
    npm start
    ```
+   Slash commands are registered **globally** (any guild the bot is in),
+   which can take up to ~1hr to propagate on first deploy or when a
+   command changes — instant per-server registration isn't available once
+   more than one server is in play.
+
+4. **Per-server configuration**
+   In each Discord server the bot joins, a server admin runs:
+   ```
+   /settings channels inventory:#your-channel gold:#your-gold-channel
+   ```
+   (`gold:` is optional — omit it to track gold in the same channel as
+   items.) See **General inventory & gold tracking** below for what goes
+   in those channels, and **Permissions** for who's allowed to run
+   `/settings`.
 
 ## Commands
 
@@ -45,12 +68,14 @@ replacing the `+item` message-scrollback system.
 - `/contract buy name: items: cost_gold: source:` — officers, buys items into inventory from a vendor (treasury purchase, no contributor credited)
 - `/payout for:` — running totals if open, final breakdown if closed
 - `/stock` — shows current general inventory levels
+- `/treasury` — shows the current guild gold balance
 - `/item merge from: into:` — officers, folds a duplicate item (e.g. a typo) into another
+- `/settings view` / `/settings channels` / `/settings currency` — officers, configure this server's channels and currency words
 
-## General inventory tracking
+## General inventory & gold tracking
 
 Separate from contracts: post a message in the channel set by
-`INVENTORY_CHANNEL_ID` with one item per line —
+`/settings channels inventory:` with one item per line —
 
 ```
 +15 Cabbage
@@ -82,25 +107,47 @@ stock nobody actually contributed) rather than the sale being rejected.
 The reverse direction is `/contract buy` — the guild spending gold to
 acquire stock from an outside vendor. Unlike a sale, there's no existing
 contributor to credit, so purchased stock enters inventory as an
-unattributed lot (same as legacy/backorder stock) and the cost is simply
-logged as a closed contract for record-keeping — visible later via
-`/payout for:` alongside real contracts and sales, just without a split.
+unattributed lot (same as legacy/backorder stock), and the cost is
+recorded both as a closed contract (visible via `/payout for:`) and as a
+debit against the treasury.
+
+**Gold** works the same way, in the channel set by `/settings channels
+gold:` (or the inventory channel, if you didn't set one separately) —
+post lines like:
+
+```
+-100 gold (buying carrots)
++200 septims (sold a book)
+```
+
+The parenthetical note is optional. `/settings currency` controls which
+words the bot recognizes as currency (`gold septim septims` by default) —
+useful if your game uses different terminology. Every gold movement,
+whether posted manually like this or generated automatically by
+`/contract buy`/`sell`/`close`, lands in the same guild treasury ledger;
+`/treasury` shows the running balance.
 
 ## Permissions
 
-`/contract create` and `/contract close` default to requiring **Manage
-Server** (`ManageGuild`). Server admins can loosen or tighten this per
-role via Server Settings → Integrations → Zenithar Bot, without touching
-code. Changing the default in code means editing
-`setDefaultMemberPermissions(...)` in `src/commands/contract.js` and
+`/contract create`, `/contract close`, `/contract sell`, `/contract buy`,
+`/item merge`, and `/settings` all default to requiring **Manage Server**
+(`ManageGuild`). Server admins can loosen or tighten this per role via
+Server Settings → Integrations → Zenithar Bot, without touching code —
+this is configured per-server, independently of every other server the
+bot is in. Changing the *default* in code means editing
+`setDefaultMemberPermissions(...)` in the relevant command file and
 re-running `npm run deploy-commands` (or the equivalent
-`docker compose run --rm bot node src/deploy-commands.js` in production).
+`docker compose run --rm bot node src/deploy-commands.js` in production) —
+note that as a global command update this can take up to ~1hr to
+propagate.
 
 ## Still to decide
 
 - **Unit values**: single-material contracts (Dawnstar charcoal) work fine
   with the default `unit_value = 1`. For mixed contracts (the farm run:
   cabbage/wheat/gourd/potato) you'll want real relative values in the
-  `items` table so the split reflects actual worth, not just item count.
+  `items` table so the split reflects actual worth, not just item count —
+  `unit_value` supports up to 4 decimal places for items worth less than 1
+  gold.
 - **Historical data**: this doesn't import the existing Discord scrollback —
   intentionally deferred per your earlier call. New contracts start clean.
