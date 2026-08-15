@@ -26,7 +26,7 @@ export async function resolveOrCreateItem(name) {
   return { ...created.rows[0], created: true };
 }
 
-async function createLot(itemId, memberId, quantity) {
+export async function createLot(itemId, memberId, quantity) {
   await query(
     `INSERT INTO inventory_lots (item_id, member_id, quantity, original_quantity)
      VALUES ($1, $2, $3, $3)`,

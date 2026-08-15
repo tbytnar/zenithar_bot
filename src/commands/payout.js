@@ -12,13 +12,15 @@ export const data = new SlashCommandBuilder()
 export async function execute(interaction) {
   const contractId = interaction.options.getString('for');
 
-  const contract = await query(`SELECT name, status FROM contracts WHERE id = $1`, [contractId]);
+  const contract = await query(`SELECT name, status, payout_gold, destination FROM contracts WHERE id = $1`, [
+    contractId,
+  ]);
   if (contract.rows.length === 0) {
     await interaction.reply({ content: 'Contract not found.', ephemeral: true });
     return;
   }
 
-  const { name, status } = contract.rows[0];
+  const { name, status, payout_gold: payoutGold, destination } = contract.rows[0];
 
   if (status === 'closed') {
     const payouts = await query(
@@ -26,6 +28,18 @@ export async function execute(interaction) {
        ORDER BY gold_awarded DESC`,
       [contractId]
     );
+
+    if (payouts.rows.length === 0) {
+      // A treasury purchase (/contract buy), or a sale where nothing was
+      // eligible to credit - either way there's a gold amount but no split.
+      const detail =
+        payoutGold != null
+          ? `${Number(payoutGold)}g recorded${destination ? ` (${destination})` : ''} — no contributors credited.`
+          : 'No payout recorded for this contract.';
+      await interaction.reply(`**${name} (closed)**\n${detail}`);
+      return;
+    }
+
     const lines = payouts.rows.map(
       (r) =>
         `<@${r.member_id}>: ${(r.share_pct * 100).toFixed(1)}% — ${Number(r.gold_awarded).toFixed(0)}g${r.paid ? ' ✅' : ''}`

@@ -1,7 +1,7 @@
 import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
 import { query, upsertMember } from '../db.js';
 import { contractAutocompleteLabel } from '../format.js';
-import { resolveOrCreateItem, consumeInventory } from '../inventory.js';
+import { resolveOrCreateItem, consumeInventory, createLot } from '../inventory.js';
 
 const SELL_ITEM_LINE = /^\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
 
@@ -68,6 +68,26 @@ export const data = new SlashCommandBuilder()
       )
       .addStringOption((opt) =>
         opt.setName('destination').setDescription('Buyer or destination')
+      )
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('buy')
+      .setDescription('Buy items into inventory from a vendor (treasury purchase)')
+      .addStringOption((opt) =>
+        opt.setName('name').setDescription('Purchase name/label').setRequired(true)
+      )
+      .addStringOption((opt) =>
+        opt
+          .setName('items')
+          .setDescription('One "<quantity> <item name>" per line, e.g. "15 Cabbage"')
+          .setRequired(true)
+      )
+      .addNumberOption((opt) =>
+        opt.setName('cost_gold').setDescription('Total gold spent on this purchase').setRequired(true)
+      )
+      .addStringOption((opt) =>
+        opt.setName('source').setDescription('Vendor or where it was bought from')
       )
   );
 
@@ -166,6 +186,46 @@ export async function execute(interaction) {
     }
 
     await interaction.reply(`${label} — **${payoutGold}g** split:\n${lines.join('\n')}`);
+    return;
+  }
+
+  if (sub === 'buy') {
+    const name = interaction.options.getString('name');
+    const source = interaction.options.getString('source');
+    const itemsText = interaction.options.getString('items');
+    const costGold = interaction.options.getNumber('cost_gold');
+
+    const itemLines = itemsText
+      .split('\n')
+      .map((line) => line.match(SELL_ITEM_LINE))
+      .filter(Boolean);
+
+    if (itemLines.length === 0) {
+      await interaction.reply({
+        content: 'Could not parse any items — use one "<quantity> <item name>" per line.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const contractResult = await query(
+      `INSERT INTO contracts (name, destination, status, payout_gold, closed_at)
+       VALUES ($1, $2, 'closed', $3, now()) RETURNING id`,
+      [name, source, costGold]
+    );
+
+    const purchased = [];
+    for (const match of itemLines) {
+      const [, qtyStr, rawName] = match;
+      const quantity = Number(qtyStr);
+      const item = await resolveOrCreateItem(rawName.trim());
+      await createLot(item.id, null, quantity);
+      purchased.push(`${quantity} ${item.name}`);
+    }
+
+    await interaction.reply(
+      `**${name}** — bought${source ? ` from ${source}` : ''} for **${costGold}g**: ${purchased.join(', ')}.`
+    );
   }
 }
 

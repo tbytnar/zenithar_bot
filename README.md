@@ -42,6 +42,7 @@ replacing the `+item` message-scrollback system.
 - `/contribute undo` — removes your own most recent contribution
 - `/contract close for: payout_gold:` — locks the contract, computes and posts the split
 - `/contract sell name: items: payout_gold: destination:` — officers, sells items straight out of general inventory and credits contributors back (see below)
+- `/contract buy name: items: cost_gold: source:` — officers, buys items into inventory from a vendor (treasury purchase, no contributor credited)
 - `/payout for:` — running totals if open, final breakdown if closed
 - `/stock` — shows current general inventory levels
 - `/item merge from: into:` — officers, folds a duplicate item (e.g. a typo) into another
@@ -77,6 +78,13 @@ gold across contributors, just auto-logged instead of typed by hand.
 Selling more than is currently in stock is allowed — the shortfall is
 tracked as an unattributed deficit (nobody gets credited for gold on
 stock nobody actually contributed) rather than the sale being rejected.
+
+The reverse direction is `/contract buy` — the guild spending gold to
+acquire stock from an outside vendor. Unlike a sale, there's no existing
+contributor to credit, so purchased stock enters inventory as an
+unattributed lot (same as legacy/backorder stock) and the cost is simply
+logged as a closed contract for record-keeping — visible later via
+`/payout for:` alongside real contracts and sales, just without a split.
 
 ## Permissions
 
