@@ -22,6 +22,14 @@ CREATE TABLE guild_settings (
 -- you run /settings channels to point it elsewhere.
 INSERT INTO guild_settings (guild_id) VALUES (:target_guild_id);
 
+-- Drop the old single-column FKs into members(id) *before* touching
+-- members' primary key below — Postgres won't let members_pkey be dropped
+-- while anything still depends on it.
+ALTER TABLE contributions DROP CONSTRAINT contributions_author_id_fkey;
+ALTER TABLE contributions DROP CONSTRAINT contributions_credit_id_fkey;
+ALTER TABLE payouts DROP CONSTRAINT payouts_member_id_fkey;
+ALTER TABLE inventory_lots DROP CONSTRAINT inventory_lots_member_id_fkey;
+
 -- members: add guild_id, move the primary key to (id, guild_id)
 ALTER TABLE members ADD COLUMN guild_id BIGINT;
 UPDATE members SET guild_id = :target_guild_id;
@@ -45,13 +53,12 @@ UPDATE contracts SET guild_id = :target_guild_id;
 ALTER TABLE contracts ALTER COLUMN guild_id SET NOT NULL;
 ALTER TABLE contracts ADD FOREIGN KEY (guild_id) REFERENCES guild_settings(guild_id);
 
--- contributions
+-- contributions: add guild_id, then re-add the member FKs (composite this
+-- time) that were dropped above
 ALTER TABLE contributions ADD COLUMN guild_id BIGINT;
 UPDATE contributions SET guild_id = :target_guild_id;
 ALTER TABLE contributions ALTER COLUMN guild_id SET NOT NULL;
 ALTER TABLE contributions ADD FOREIGN KEY (guild_id) REFERENCES guild_settings(guild_id);
-ALTER TABLE contributions DROP CONSTRAINT contributions_author_id_fkey;
-ALTER TABLE contributions DROP CONSTRAINT contributions_credit_id_fkey;
 ALTER TABLE contributions ADD FOREIGN KEY (author_id, guild_id) REFERENCES members(id, guild_id);
 ALTER TABLE contributions ADD FOREIGN KEY (credit_id, guild_id) REFERENCES members(id, guild_id);
 
@@ -60,7 +67,6 @@ ALTER TABLE payouts ADD COLUMN guild_id BIGINT;
 UPDATE payouts SET guild_id = :target_guild_id;
 ALTER TABLE payouts ALTER COLUMN guild_id SET NOT NULL;
 ALTER TABLE payouts ADD FOREIGN KEY (guild_id) REFERENCES guild_settings(guild_id);
-ALTER TABLE payouts DROP CONSTRAINT payouts_member_id_fkey;
 ALTER TABLE payouts ADD FOREIGN KEY (member_id, guild_id) REFERENCES members(id, guild_id);
 
 -- inventory_lots
@@ -68,7 +74,6 @@ ALTER TABLE inventory_lots ADD COLUMN guild_id BIGINT;
 UPDATE inventory_lots SET guild_id = :target_guild_id;
 ALTER TABLE inventory_lots ALTER COLUMN guild_id SET NOT NULL;
 ALTER TABLE inventory_lots ADD FOREIGN KEY (guild_id) REFERENCES guild_settings(guild_id);
-ALTER TABLE inventory_lots DROP CONSTRAINT inventory_lots_member_id_fkey;
 ALTER TABLE inventory_lots ADD FOREIGN KEY (member_id, guild_id) REFERENCES members(id, guild_id);
 
 -- new: guild treasury ledger
