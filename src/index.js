@@ -10,6 +10,7 @@ import * as settings from './commands/settings.js';
 import * as treasury from './commands/treasury.js';
 import * as report from './commands/report.js';
 import { handleInventoryMessage } from './inventory.js';
+import { handleWordPointsMessage } from './wordPoints.js';
 
 const client = new Client({
   intents: [
@@ -31,6 +32,12 @@ client.once('ready', () => {
 client.on('messageCreate', async (message) => {
   try {
     await handleInventoryMessage(message);
+  } catch (err) {
+    console.error(err);
+  }
+
+  try {
+    await handleWordPointsMessage(message);
   } catch (err) {
     console.error(err);
   }

@@ -14,6 +14,10 @@ CREATE TABLE guild_settings (
     inventory_channel_id  BIGINT,
     gold_channel_id       BIGINT,                 -- NULL = same channel as inventory_channel_id
     currency_words        TEXT[] NOT NULL DEFAULT ARRAY['gold','septim','septims'],
+    -- Unannounced word-points mechanic: NULL/NULL means inactive for this
+    -- guild. No slash command sets these on purpose — see word_points.js.
+    trigger_word          TEXT,
+    blessing_channel_id   BIGINT,
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -116,6 +120,33 @@ CREATE TABLE treasury_ledger (
     FOREIGN KEY (member_id, guild_id) REFERENCES members(id, guild_id)
 );
 
+-- Running point total per member, incremented whenever their message
+-- contains the guild's configured trigger_word. Plain counter, not a
+-- ledger — nothing here is money, there's nothing to audit.
+CREATE TABLE word_points (
+    guild_id        BIGINT NOT NULL REFERENCES guild_settings(guild_id),
+    member_id       BIGINT NOT NULL,
+    points          INT NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (guild_id, member_id),
+    FOREIGN KEY (member_id, guild_id) REFERENCES members(id, guild_id)
+);
+
+-- Hand-authored level curve: each level is its own row with its own
+-- threshold (cumulative points required) and flavor text, rather than a
+-- generated formula, so the shape of the curve and the writing are both
+-- entirely up to whoever authors them (currently: direct SQL — see
+-- word_points.js).
+CREATE TABLE level_tiers (
+    id              SERIAL PRIMARY KEY,
+    guild_id        BIGINT NOT NULL REFERENCES guild_settings(guild_id),
+    level_number    INT NOT NULL,
+    threshold       INT NOT NULL,
+    title           TEXT NOT NULL,
+    blessing        TEXT NOT NULL,
+    UNIQUE (guild_id, level_number)
+);
+
 CREATE INDEX idx_members_guild ON members(guild_id);
 CREATE INDEX idx_items_guild ON items(guild_id);
 CREATE INDEX idx_items_name_trgm ON items USING gin (name gin_trgm_ops);
@@ -127,6 +158,7 @@ CREATE INDEX idx_payouts_guild ON payouts(guild_id);
 CREATE INDEX idx_inventory_lots_guild_item ON inventory_lots(guild_id, item_id);
 CREATE INDEX idx_treasury_ledger_guild ON treasury_ledger(guild_id);
 CREATE INDEX idx_treasury_ledger_contract ON treasury_ledger(contract_id);
+CREATE INDEX idx_level_tiers_guild ON level_tiers(guild_id);
 
 -- No seed data: item catalogs are now per-guild and build organically as
 -- members post inventory lines or log contributions (see resolveOrCreateItem
