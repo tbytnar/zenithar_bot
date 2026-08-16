@@ -76,7 +76,7 @@ the others.
 - `/item create name: unit_value:` — officers, adds a new item to the catalog (materials, or a non-physical item like a service — see below)
 - `/item edit item: name: unit_value:` — officers, renames an item and/or changes its relative value
 - `/item delete item:` — officers, removes an item with no contract or inventory history
-- `/item list` — shows every item and its relative value
+- `/item list` — officers, shows every item and its relative value
 - `/item merge from: into:` — officers, folds a duplicate item (e.g. a typo) into another
 - `/settings view` / `/settings channels` / `/settings currency` — officers, configure this server's channels and currency words
 - `/report leaderboard` / `/report treasury` / `/report stock` — charted PNG reports (see below)
@@ -155,16 +155,22 @@ whether posted manually like this or generated automatically by
 ## Permissions
 
 `/contract create`, `/contract close`, `/contract sell`, `/contract buy`,
-`/item merge`, and `/settings` all default to requiring **Manage Server**
-(`ManageGuild`). Server admins can loosen or tighten this per role via
-Server Settings → Integrations → Zenithar Bot, without touching code —
-this is configured per-server, independently of every other server the
-bot is in. Changing the *default* in code means editing
-`setDefaultMemberPermissions(...)` in the relevant command file and
-re-running `npm run deploy-commands` (or the equivalent
-`docker compose run --rm bot node src/deploy-commands.js` in production) —
-note that as a global command update this can take up to ~1hr to
-propagate.
+every `/item` subcommand (`create`/`edit`/`delete`/`list`/`merge`), and
+`/settings` all default to requiring **Manage Server** (`ManageGuild`).
+Discord applies `setDefaultMemberPermissions` to a whole command, not per
+subcommand — so `/item list`, despite being read-only, currently requires
+the same permission as `/item delete`. If that's not what you want (e.g.
+letting anyone browse the catalog), it'd need to move to its own top-level
+command rather than an `/item` subcommand.
+
+Server admins can loosen or tighten any of this per role via Server
+Settings → Integrations → Zenithar Bot, without touching code — configured
+per-server, independently of every other server the bot is in. Changing
+the *default* in code means editing `setDefaultMemberPermissions(...)` in
+the relevant command file and re-running `npm run deploy-commands` (or the
+equivalent `docker compose run --rm bot node src/deploy-commands.js` in
+production) — note that as a global command update this can take up to
+~1hr to propagate.
 
 ## Still to decide
 
