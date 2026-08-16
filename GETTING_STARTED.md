@@ -67,6 +67,11 @@ redeploy involved):
 - **`/contract sell`** — sell straight out of general inventory, crediting
   whoever's stock it came from.
 - **`/contract buy`** — spend treasury gold to bring in stock from a vendor.
+- **`/item create` / `/item edit` / `/item delete` / `/item list`** — manage
+  the item catalog, including its relative values. Items don't have to be
+  physical materials — this is also how you'd add something like "Escort
+  Shift" so members providing a service instead of goods can log
+  contributions and show up on the leaderboard too.
 - **`/item merge`** — fold a duplicate item (usually a typo) into the
   correct one.
 - **`/settings`** — everything from step 2, plus currency words.

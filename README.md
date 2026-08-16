@@ -73,6 +73,10 @@ the others.
 - `/payout for:` — running totals if open, final breakdown if closed
 - `/stock` — shows current general inventory levels
 - `/treasury` — shows the current guild gold balance
+- `/item create name: unit_value:` — officers, adds a new item to the catalog (materials, or a non-physical item like a service — see below)
+- `/item edit item: name: unit_value:` — officers, renames an item and/or changes its relative value
+- `/item delete item:` — officers, removes an item with no contract or inventory history
+- `/item list` — shows every item and its relative value
 - `/item merge from: into:` — officers, folds a duplicate item (e.g. a typo) into another
 - `/settings view` / `/settings channels` / `/settings currency` — officers, configure this server's channels and currency words
 - `/report leaderboard` / `/report treasury` / `/report stock` — charted PNG reports (see below)
@@ -170,5 +174,14 @@ propagate.
   `items` table so the split reflects actual worth, not just item count —
   `unit_value` supports up to 4 decimal places for items worth less than 1
   gold.
+- **Non-physical items**: `unit_value` doesn't require the item to be a
+  material — `/item create` can add something like "Escort Shift" or "Guard
+  Duty" with its own relative value, and members log it with
+  `/contribute add` exactly like a material. It splits payouts the same
+  way, so escorts/guards can earn a share (and show up on
+  `/report leaderboard`) either on a standalone contract or mixed into the
+  same contract as whoever/whatever they protected. Just create it via
+  `/item create`, not by posting `+1` in the inventory channel — that would
+  create a real stock lot and start showing up in `/stock`.
 - **Historical data**: this doesn't import the existing Discord scrollback —
   intentionally deferred per your earlier call. New contracts start clean.
