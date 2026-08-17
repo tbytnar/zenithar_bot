@@ -1,8 +1,5 @@
+import { formatDate } from './dates.js';
+
 export function contractAutocompleteLabel(name, createdAt) {
-  const date = createdAt.toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-  return `${name} (${date})`;
+  return `${name} (${formatDate(createdAt)})`;
 }

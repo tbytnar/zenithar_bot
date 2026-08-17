@@ -1,6 +1,7 @@
 import { SlashCommandBuilder } from 'discord.js';
 import { query } from '../db.js';
 import { contractChoices, isValidId } from '../autocomplete.js';
+import { formatDate, isOverdue } from '../dates.js';
 
 export const data = new SlashCommandBuilder()
   .setName('payout')
@@ -22,7 +23,7 @@ export async function execute(interaction) {
   }
 
   const contract = await query(
-    `SELECT name, status, payout_gold, destination FROM contracts WHERE id = $1 AND guild_id = $2`,
+    `SELECT name, status, payout_gold, destination, due_at FROM contracts WHERE id = $1 AND guild_id = $2`,
     [contractId, guildId]
   );
   if (contract.rows.length === 0) {
@@ -30,7 +31,10 @@ export async function execute(interaction) {
     return;
   }
 
-  const { name, status, payout_gold: payoutGold, destination } = contract.rows[0];
+  const { name, status, payout_gold: payoutGold, destination, due_at: dueAt } = contract.rows[0];
+  const dueLine = dueAt
+    ? `Due: ${formatDate(dueAt)}${status === 'open' && isOverdue(dueAt) ? ' ⚠️ Overdue' : ''}\n`
+    : '';
 
   if (status === 'closed') {
     const payouts = await query(
@@ -46,7 +50,7 @@ export async function execute(interaction) {
         payoutGold != null
           ? `${Number(payoutGold)}g recorded${destination ? ` (${destination})` : ''} — no contributors credited.`
           : 'No payout recorded for this contract.';
-      await interaction.reply(`**${name} (closed)**\n${detail}`);
+      await interaction.reply(`**${name} (closed)**\n${dueLine}${detail}`);
       return;
     }
 
@@ -54,7 +58,7 @@ export async function execute(interaction) {
       (r) =>
         `<@${r.member_id}>: ${(r.share_pct * 100).toFixed(1)}% — ${Number(r.gold_awarded).toFixed(0)}g${r.paid ? ' ✅' : ''}`
     );
-    await interaction.reply(`**${name} (closed)**\n${lines.join('\n')}`);
+    await interaction.reply(`**${name} (closed)**\n${dueLine}${lines.join('\n')}`);
     return;
   }
 
@@ -68,7 +72,7 @@ export async function execute(interaction) {
   );
 
   if (totals.rows.length === 0) {
-    await interaction.reply(`**${name} (open)** — no contributions logged yet.`);
+    await interaction.reply(`**${name} (open)**\n${dueLine}No contributions logged yet.`);
     return;
   }
 
@@ -78,7 +82,7 @@ export async function execute(interaction) {
     return `<@${r.credit_id}>: ${r.weighted_input} (${pct}%)`;
   });
 
-  await interaction.reply(`**${name} (open — running totals)**\n${lines.join('\n')}`);
+  await interaction.reply(`**${name} (open — running totals)**\n${dueLine}${lines.join('\n')}`);
 }
 
 export async function autocomplete(interaction) {

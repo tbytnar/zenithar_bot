@@ -1,9 +1,13 @@
-import { SlashCommandBuilder, PermissionFlagsBits } from 'discord.js';
+import { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } from 'discord.js';
 import { query, upsertMember, withTransaction } from '../db.js';
 import { itemChoices, contractChoices, isValidId } from '../autocomplete.js';
 import { resolveOrCreateItem, consumeInventory, createLot } from '../inventory.js';
 import { recordLedgerEntry } from '../treasury.js';
 import { splitProportionally } from '../math.js';
+import { parseDueDate, formatDate } from '../dates.js';
+import { getGuildSettings } from '../guildSettings.js';
+
+const QUESTS_EMBED_COLOR = 0x4a3aa7;
 
 const ITEM_LINE = /^\s*(\d+(?:\.\d+)?)\s+(.+?)\s*$/;
 
@@ -39,6 +43,9 @@ export const data = new SlashCommandBuilder()
       )
       .addNumberOption((opt) =>
         opt.setName('target_quantity').setDescription('How much is needed').setMinValue(0)
+      )
+      .addStringOption((opt) =>
+        opt.setName('due').setDescription('Due date, format YYYY-MM-DD (e.g. 2026-08-25)')
       )
   )
   .addSubcommand((sub) =>
@@ -119,6 +126,7 @@ export async function execute(interaction) {
     const destination = interaction.options.getString('destination');
     const targetItemId = interaction.options.getString('target_item');
     const targetQty = interaction.options.getNumber('target_quantity');
+    const dueInput = interaction.options.getString('due');
 
     if (targetItemId && !isValidId(targetItemId)) {
       await interaction.reply({
@@ -128,15 +136,30 @@ export async function execute(interaction) {
       return;
     }
 
+    let dueAt = null;
+    if (dueInput) {
+      dueAt = parseDueDate(dueInput);
+      if (!dueAt) {
+        await interaction.reply({
+          content: 'Due date must be in YYYY-MM-DD format, e.g. 2026-08-25.',
+          ephemeral: true,
+        });
+        return;
+      }
+    }
+
     const result = await query(
-      `INSERT INTO contracts (guild_id, name, destination, target_item_id, target_quantity)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-      [guildId, name, destination, targetItemId, targetQty]
+      `INSERT INTO contracts (guild_id, name, destination, target_item_id, target_quantity, due_at)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [guildId, name, destination, targetItemId, targetQty, dueAt]
     );
+    const contractId = result.rows[0].id;
 
     await interaction.reply(
-      `Opened contract **${name}** (#${result.rows[0].id})${destination ? ` for ${destination}` : ''}.`
+      `Opened contract **${name}** (#${contractId})${destination ? ` for ${destination}` : ''}${dueAt ? ` — due ${formatDate(dueAt)}` : ''}.`
     );
+
+    await postQuestAnnouncement(guildId, interaction.client, { name, destination, targetItemId, targetQty, dueAt });
     return;
   }
 
@@ -285,6 +308,40 @@ export async function execute(interaction) {
       `**${name}** — bought${source ? ` from ${source}` : ''} for **${costGold}g**: ${purchased.join(', ')}.`
     );
   }
+}
+
+// Posts a new-contract announcement to the guild's configured quests
+// channel, if one is set. Best-effort: a missing/inaccessible channel
+// shouldn't fail contract creation, which has already succeeded by the
+// time this runs.
+async function postQuestAnnouncement(guildId, client, { name, destination, targetItemId, targetQty, dueAt }) {
+  const settings = await getGuildSettings(guildId);
+  if (!settings.quests_channel_id) return;
+
+  const channel = await client.channels.fetch(settings.quests_channel_id).catch(() => null);
+  if (!channel) return;
+
+  const fields = [];
+  if (destination) fields.push({ name: 'Destination', value: destination, inline: true });
+  if (targetItemId) {
+    const item = await query(`SELECT name FROM items WHERE id = $1 AND guild_id = $2`, [targetItemId, guildId]);
+    if (item.rows.length > 0) {
+      fields.push({
+        name: 'Target',
+        value: targetQty != null ? `${targetQty} ${item.rows[0].name}` : item.rows[0].name,
+        inline: true,
+      });
+    }
+  }
+  if (dueAt) fields.push({ name: 'Due', value: formatDate(dueAt), inline: true });
+
+  const embed = new EmbedBuilder()
+    .setColor(QUESTS_EMBED_COLOR)
+    .setTitle(`📜 New Contract: ${name}`)
+    .setDescription('Use `/contribute add` to log your contribution.')
+    .addFields(fields);
+
+  await channel.send({ embeds: [embed] }).catch(() => null);
 }
 
 // Shared by /contract close and /contract sell. `creditSaleToTreasury`

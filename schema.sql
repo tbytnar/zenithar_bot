@@ -18,6 +18,7 @@ CREATE TABLE guild_settings (
     -- guild. No slash command sets these on purpose — see word_points.js.
     trigger_word          TEXT,
     blessing_channel_id   BIGINT,
+    quests_channel_id     BIGINT,                 -- NULL = new contracts aren't auto-posted anywhere
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -51,6 +52,7 @@ CREATE TABLE contracts (
     payout_gold     NUMERIC,
     status          TEXT NOT NULL DEFAULT 'open'
                         CHECK (status IN ('open','closed','cancelled')),
+    due_at          TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     closed_at       TIMESTAMPTZ
 );

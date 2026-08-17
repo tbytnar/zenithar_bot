@@ -10,16 +10,20 @@ export async function getGuildSettings(guildId) {
 
 // Only overwrites fields that are explicitly provided; omitted ones keep
 // their current value. Column list is fixed (no dynamic SQL) on purpose.
-export async function updateGuildSettings(guildId, { inventoryChannelId, goldChannelId, currencyWords } = {}) {
+export async function updateGuildSettings(
+  guildId,
+  { inventoryChannelId, goldChannelId, questsChannelId, currencyWords } = {}
+) {
   await ensureGuild(guildId);
   await query(
     `UPDATE guild_settings SET
        inventory_channel_id = COALESCE($2, inventory_channel_id),
        gold_channel_id = COALESCE($3, gold_channel_id),
-       currency_words = COALESCE($4, currency_words),
+       quests_channel_id = COALESCE($4, quests_channel_id),
+       currency_words = COALESCE($5, currency_words),
        updated_at = now()
      WHERE guild_id = $1`,
-    [guildId, inventoryChannelId ?? null, goldChannelId ?? null, currencyWords ?? null]
+    [guildId, inventoryChannelId ?? null, goldChannelId ?? null, questsChannelId ?? null, currencyWords ?? null]
   );
   return getGuildSettings(guildId);
 }

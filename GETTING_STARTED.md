@@ -26,7 +26,7 @@ separate hosting, database, or account to set up on your end.
 Once it's in, run this in your server (requires Manage Server permission):
 
 ```
-/settings channels inventory:#your-channel gold:#your-gold-channel
+/settings channels inventory:#your-channel gold:#your-gold-channel quests:#your-quests-channel
 ```
 
 - `inventory:` — the channel where `+15 Cabbage` / `-8 Gourd` style messages
@@ -34,6 +34,9 @@ Once it's in, run this in your server (requires Manage Server permission):
 - `gold:` — the channel where `+100 gold` / `-50 septims` style messages get
   tracked as treasury gold. Optional — leave it out and gold gets tracked in
   the same channel as items.
+- `quests:` — where new contracts get auto-posted when an officer runs
+  `/contract create`. Optional — leave it out and new contracts just won't
+  be announced anywhere automatically.
 
 If your game calls its currency something other than "gold" or "septims",
 run `/settings currency words:whatever your terms are` to teach it the
@@ -62,6 +65,8 @@ who else gets it (Server Settings → Integrations → Zenithar Bot, no code or
 redeploy involved):
 
 - **`/contract create`** — open a new contract for people to contribute to.
+  Add `due:YYYY-MM-DD` for a deadline — it shows up on the quests-channel
+  post and flags as overdue on `/payout` once it passes.
 - **`/contract close`** — lock a contract and split the payout among
   contributors.
 - **`/contract sell`** — sell straight out of general inventory, crediting

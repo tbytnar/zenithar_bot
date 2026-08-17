@@ -55,16 +55,17 @@ the others.
 4. **Per-server configuration**
    In each Discord server the bot joins, a server admin runs:
    ```
-   /settings channels inventory:#your-channel gold:#your-gold-channel
+   /settings channels inventory:#your-channel gold:#your-gold-channel quests:#your-quests-channel
    ```
-   (`gold:` is optional — omit it to track gold in the same channel as
-   items.) See **General inventory & gold tracking** below for what goes
-   in those channels, and **Permissions** for who's allowed to run
-   `/settings`.
+   (`gold:` and `quests:` are both optional — omit `gold:` to track gold in
+   the same channel as items; omit `quests:` and new contracts just won't
+   be auto-posted anywhere.) See **General inventory & gold tracking**
+   below for what goes in those channels, and **Permissions** for who's
+   allowed to run `/settings`.
 
 ## Commands
 
-- `/contract create name: destination: target_item: target_quantity:` — officers, opens a contract
+- `/contract create name: destination: target_item: target_quantity: due:` — officers, opens a contract (`due:` is optional, format `YYYY-MM-DD`)
 - `/contribute add item: amount: for: credit: note:` — logs an input toward a contract
 - `/contribute undo` — removes your own most recent contribution
 - `/contract close for: payout_gold:` — locks the contract, computes and posts the split
@@ -151,6 +152,22 @@ useful if your game uses different terminology. Every gold movement,
 whether posted manually like this or generated automatically by
 `/contract buy`/`sell`/`close`, lands in the same guild treasury ledger;
 `/treasury` shows the running balance.
+
+## Quests channel & due dates
+
+If `/settings channels quests:` is set, every `/contract create` posts an
+embed there — name, destination, target item/quantity, and due date,
+whichever of those were set — as a heads-up for anyone browsing for
+something to contribute to. `/contract sell` and `/contract buy` don't
+post here, since those represent something already done, not a call to
+action.
+
+`due:` on `/contract create` is optional and takes a plain `YYYY-MM-DD`
+date. It shows up on the quests-channel post and on `/payout for:` while
+the contract's still open, with a ⚠️ **Overdue** flag once the date's
+passed and nobody's closed it yet. Nothing currently pings anyone when a
+contract goes overdue — it's a passive flag on `/payout`, not a
+notification.
 
 ## Permissions
 
